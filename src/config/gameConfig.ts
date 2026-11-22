@@ -127,6 +127,44 @@ export const gameConfig = {
     maxCount: 60,
   },
   /**
+   * P0-1 真实套圈物理参数（全部为实验起点，见 04_决策与参数.md）。
+   * 环体由 16 段胶囊围成，内孔真实空出；不参与套中判定（P0-2 才做）。
+   */
+  ring: {
+    /** 环中心线半径（米）；内孔半径 = radius - tubeRadius。 */
+    radius: 0.42,
+    /** 环管半径（米），也是胶囊碰撞体半径。 */
+    tubeRadius: 0.045,
+    /** 碰撞胶囊段数：段间重叠，内孔连续。 */
+    segments: 16,
+    /** 环体总质量（kg，按段均分到各 Collider）。 */
+    mass: 0.25,
+    /** 恢复系数（地面/围栏/鹅体通用起点）。 */
+    restitution: 0.3,
+    friction: 0.6,
+    linearDamping: 0.05,
+    angularDamping: 0.05,
+    /** 出手高度（米）。 */
+    releaseHeight: 1.0,
+    /** 拖拽投掷的最大初速度（m/s）。 */
+    speed: 11,
+    /** 初始抛射仰角（度）。 */
+    elevationDeg: 25,
+    /** 自旋角速度（rad/s，绕世界 Y 轴）。 */
+    spin: 10,
+    /** 场上套圈上限，超出回收最旧的。 */
+    maxCount: 12,
+    /** 高速投掷启用 CCD，防止穿过 0.08 m 薄栏。 */
+    ccd: true,
+    /** 垂直落颈测试的出手高度（米）。 */
+    dropHeight: 1.7,
+    /** 偏移落颈测试高度与水平偏移（米），用于撞头/撞颈验证。 */
+    offsetHeight: 1.5,
+    offsetDistance: 0.3,
+    /** 静止超过该秒数后回收，避免长期堆积。 */
+    sleepRecycleSec: 8,
+  },
+  /**
    * 套圈飞行预览（纯视觉，不参与物理与命中判定）。
    * 用于判断玩家能否读懂飞行纵深、落点与鹅脖位置。
    */

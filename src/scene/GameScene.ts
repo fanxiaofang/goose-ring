@@ -11,7 +11,7 @@ import {
   toVector3,
   type CameraState,
 } from './cameraUtils';
-import { createGoosePlaceholder } from '../goose/GoosePlaceholder';
+import { createGoosePlaceholder, type GooseLayoutEntry } from '../goose/GoosePlaceholder';
 
 /**
  * 3D 灰盒场景：地面、大围栏、灯光、灰盒鹅占位、投掷起点标记。
@@ -36,11 +36,15 @@ export class GameScene {
   private readonly lookTarget: THREE.Vector3;
   private aspect: number;
 
-  constructor(canvas: HTMLCanvasElement) {
+  constructor(
+    canvas: HTMLCanvasElement,
+    gooseLayout: readonly GooseLayoutEntry[] = gameConfig.goose.layout,
+  ) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, gameConfig.render.maxPixelRatio));
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // Three r187 已移除 PCFSoftShadowMap，使用 PCF（与阴影贴图 2048 配合）。
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color('#b8d4e8'); // 灰盒天空
@@ -104,7 +108,7 @@ export class GameScene {
 
     // ---- 灰盒鹅占位（检查立体尺度）----
     this.gooseGroup = new THREE.Group();
-    for (const entry of gameConfig.goose.layout) {
+    for (const entry of gooseLayout) {
       this.gooseGroup.add(createGoosePlaceholder(entry));
     }
     this.scene.add(this.gooseGroup);

@@ -2,24 +2,46 @@ import * as THREE from 'three';
 import { gameConfig, cameraModes, type CameraModeId } from '../config/gameConfig';
 import { GameScene } from '../scene/GameScene';
 import { PhysicsWorld } from '../physics/PhysicsWorld';
+import { FixedStepAccumulator } from '../physics/fixedStep';
 import { DebugPanel, FrameStats } from '../ui/DebugPanel';
 import { RingPreview } from '../ring/RingPreview';
-import { getGooseNeckWorldPosition } from '../goose/GoosePlaceholder';
+import { RingSystem, type RingLaunchSpec } from '../ring/RingSystem';
+import {
+  PRESET_SPEED_FACTOR,
+  FENCE_PRESET_ELEVATION_DEG,
+  THROW_PRESETS,
+  type ThrowPreset,
+} from '../ring/throwPresets';
+import { horizontalRingRotation } from '../ring/ringGeometry';
+import { velocityToward, velocityWithYaw } from '../ring/throwMath';
+import {
+  getGooseNeckWorldPosition,
+  type GooseLayoutEntry,
+} from '../goose/GoosePlaceholder';
 
 interface BallEntry {
   body: import('@dimforge/rapier3d-compat').RigidBody;
   mesh: THREE.Mesh;
 }
 
+interface DragState {
+  startX: number;
+  startY: number;
+  power: number;
+  yaw: number;
+}
+
 /**
  * 游戏生命周期主控：固定物理步长循环 + 渲染 + 输入 + 调试。
- * P0-0 范围：场景、相机、测试球投放、纯视觉套圈预览；无正式玩法与命中判定。
+ * P0-1 范围：真实有孔套圈的物理投掷、可重复实验预设与参数调试；
+ * 不做套中判定、不计分、不写正式数据（P0-2 才实现）。
  */
 export class GameApp {
   private scene!: GameScene;
   private physics!: PhysicsWorld;
   private panel!: DebugPanel;
   private ringPreview!: RingPreview;
+  private ringSystem!: RingSystem;
 
   private balls: BallEntry[] = [];
   private ballGeo = new THREE.SphereGeometry(gameConfig.ball.radius, 24, 16);
@@ -27,52 +49,89 @@ export class GameApp {
   /** 构图预览：隐藏测试球网格（物理仍在运行）。 */
   private previewClean = false;
 
-  private accumulator = 0;
+  /** 固定步长累加器：渲染帧率不影响物理结果。 */
+  private readonly fixedStep = new FixedStepAccumulator(
+    gameConfig.physics.fixedDt,
+    gameConfig.physics.maxCatchUpSteps,
+  );
   private lastTime = 0;
   private physicsMs = 0;
   private fps = 0;
   private frameCount = 0;
   private statTimer = 0;
+  /** 物理时间缩放（仅用于慢动作观察，不改变固定步长）。 */
+  private timeScale = 1;
 
-  private raycaster = new THREE.Raycaster();
-  private groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  private drag: DragState | null = null;
+  private lastThrow: RingLaunchSpec | null = null;
+  /** P0-1 实验目标：离玩家最近的静止鹅（单鹅模式下只有它）。 */
+  private testGoose!: GooseLayoutEntry;
+  /** 当前实际参与视觉与碰撞的鹅布局（单鹅模式下仅一只）。 */
+  private activeLayout: readonly GooseLayoutEntry[] = gameConfig.goose.layout;
+
   /** 复用向量，避免每 0.25 s 统计时新建对象。 */
   private drawBufferSize = new THREE.Vector2();
 
   async start(canvas: HTMLCanvasElement): Promise<void> {
-    this.scene = new GameScene(canvas);
-    this.physics = await PhysicsWorld.create(this.scene.scene);
+    const params = new URLSearchParams(window.location.search);
+
+    // 单鹅实验模式：只保留离玩家最近的一只，视觉与 Collider 同步缩减。
+    const singleGoose = params.get('geese') === 'single';
+    this.testGoose = pickTestGoose();
+    const layout = singleGoose ? [this.testGoose] : gameConfig.goose.layout;
+    this.activeLayout = layout;
+
+    this.scene = new GameScene(canvas, layout);
+    this.physics = await PhysicsWorld.create(this.scene.scene, layout);
     this.ringPreview = new RingPreview(this.scene.scene);
+    this.ringSystem = new RingSystem(this.scene.scene, this.physics);
 
     // 支持 URL 指定相机模式（便于固定 1280×720 截图对比）：?camera=ortho|persp25|persp35
-    const requested = new URLSearchParams(window.location.search).get('camera');
+    const requested = params.get('camera');
     if (requested && cameraModes.some((m) => m.id === requested)) {
       this.scene.setCameraMode(requested as CameraModeId);
     }
 
-    this.panel = new DebugPanel({
-      onPitchChange: (deg) => {
-        this.scene.setCameraPitch(deg);
-        this.panel.setCameraState(this.scene.getCameraState());
+    this.panel = new DebugPanel(
+      {
+        onPitchChange: (deg) => {
+          this.scene.setCameraPitch(deg);
+          this.panel.setCameraState(this.scene.getCameraState());
+        },
+        onModeChange: (id) => {
+          this.scene.setCameraMode(id);
+          this.panel.setCameraState(this.scene.getCameraState());
+        },
+        onSpawnBall: () => this.spawnBallNearCenter(),
+        onClearBalls: () => this.clearBalls(),
+        onToggleDebugLines: (visible) => this.physics.setDebugVisible(visible),
+        onTogglePreviewClean: (clean) => this.setPreviewClean(clean),
+        onPreviewRing: (depth) => this.previewRing(depth),
+        onToggleUiSafeGuide: (visible) => this.setUiSafeGuide(visible),
+        onThrowPreset: (preset) => this.throwPreset(preset),
+        onReplayThrow: () => this.replayThrow(),
+        onClearRings: () => this.ringSystem.clear(),
+        onRingTuningChange: (tuning) => Object.assign(this.ringSystem.tuning, tuning),
       },
-      onModeChange: (id) => {
-        this.scene.setCameraMode(id);
-        this.panel.setCameraState(this.scene.getCameraState());
-      },
-      onSpawnBall: () => this.spawnBallNearCenter(),
-      onClearBalls: () => this.clearBalls(),
-      onToggleDebugLines: (visible) => this.physics.setDebugVisible(visible),
-      onTogglePreviewClean: (clean) => this.setPreviewClean(clean),
-      onPreviewRing: (depth) => this.previewRing(depth),
-      onToggleUiSafeGuide: (visible) => this.setUiSafeGuide(visible),
-    });
+      this.ringSystem.tuning,
+    );
     this.panel.setCameraState(this.scene.getCameraState());
 
+    // ?wire=1：显示 Rapier 碰撞线框，用于核对环体 16 段胶囊与真实内孔
+    if (params.get('wire') === '1') this.physics.setDebugVisible(true);
+    // ?slowmo=0.35：慢动作观察弹道（物理仍按固定步长推进）
+    const slowParam = params.get('slowmo');
+    if (slowParam !== null) {
+      const slow = Number(slowParam);
+      if (Number.isFinite(slow) && slow > 0) {
+        this.timeScale = Math.min(1, Math.max(0.1, slow));
+      }
+    }
+
     // ?preview=near|far：循环预览，便于固定角度截图观察飞行纵深
-    // &hold=1：直接跳到落点保持阶段，便于截取“圈停在脖子处”的验证画面
-    const previewParam = new URLSearchParams(window.location.search).get('preview');
+    const previewParam = params.get('preview');
     if (previewParam === 'near' || previewParam === 'far') {
-      if (new URLSearchParams(window.location.search).get('hold') === '1') {
+      if (params.get('hold') === '1') {
         this.previewRing(previewParam, false);
         this.ringPreview.freezeAtTarget();
       } else {
@@ -80,21 +139,33 @@ export class GameApp {
       }
     }
     // ?safe=1：显示正式 UI 安全区参考带，便于截图核对
-    if (new URLSearchParams(window.location.search).get('safe') === '1') {
-      this.setUiSafeGuide(true);
-    }
+    if (params.get('safe') === '1') this.setUiSafeGuide(true);
 
-    // ?ui=0：隐藏调试面板，便于截取纯场景构图（面板信息可由 URL 相机参数复现）
-    if (new URLSearchParams(window.location.search).get('ui') === '0') {
+    // ?ui=0：隐藏调试面板，便于截取纯场景构图
+    if (params.get('ui') === '0') {
       const panelEl = document.getElementById('debug-panel');
       if (panelEl) panelEl.style.display = 'none';
     }
 
-    // 鼠标 / 触摸统一走 Pointer Events（AGENTS.md §9：触摸和鼠标同逻辑）
-    canvas.addEventListener('pointerdown', (e) => {
-      const hit = this.pickGroundPoint(e.clientX, e.clientY);
-      if (hit) this.spawnBall(hit.x, hit.z);
-    });
+    // ?throw=drop|offset|soft|mid|hard|fence：固定投掷，可重复截图/复现
+    const throwParam = params.get('throw');
+    if (throwParam && THROW_PRESETS.includes(throwParam as ThrowPreset)) {
+      window.setTimeout(() => this.throwPreset(throwParam as ThrowPreset), 600);
+    }
+
+    // 开发环境只读调试快照：用于验证落点/静止状态，不参与判定与正式数据
+    if (import.meta.env.DEV) {
+      (window as unknown as { __p01?: () => unknown }).__p01 = () => ({
+        rings: this.ringSystem.snapshot(),
+        timeScale: this.timeScale,
+      });
+    }
+
+    // 鼠标 / 触摸统一走 Pointer Events：按住拖动蓄力，松手投掷
+    canvas.addEventListener('pointerdown', (e) => this.onPointerDown(e, canvas));
+    canvas.addEventListener('pointermove', (e) => this.onPointerMove(e));
+    canvas.addEventListener('pointerup', (e) => this.onPointerUp(e));
+    canvas.addEventListener('pointercancel', () => this.cancelDrag());
 
     this.lastTime = performance.now();
     this.scene.renderer.setAnimationLoop(() => this.frame());
@@ -104,23 +175,16 @@ export class GameApp {
     const now = performance.now();
     const frameDt = Math.min((now - this.lastTime) / 1000, 0.25); // 切后台回来防跳变
     this.lastTime = now;
+    const scaledDt = frameDt * this.timeScale;
 
-    // 固定步长累加器：物理结果不随帧率变化（01_技术方案.md §5.1）
-    this.accumulator += frameDt;
-    let steps = 0;
+    const steps = this.fixedStep.add(scaledDt);
     const t0 = performance.now();
-    while (this.accumulator >= gameConfig.physics.fixedDt && steps < gameConfig.physics.maxCatchUpSteps) {
-      this.physics.step();
-      this.accumulator -= gameConfig.physics.fixedDt;
-      steps++;
-    }
-    if (steps >= gameConfig.physics.maxCatchUpSteps) {
-      this.accumulator = 0; // 放弃积压，避免死亡螺旋
-    }
+    for (let i = 0; i < steps; i++) this.physics.step();
     if (steps > 0) this.physicsMs = performance.now() - t0;
 
     this.syncBalls();
-    this.ringPreview.update(frameDt);
+    this.ringSystem.update(scaledDt);
+    this.ringPreview.update(scaledDt);
     this.physics.updateDebugLines();
     this.scene.render();
 
@@ -137,6 +201,7 @@ export class GameApp {
         fps: this.fps,
         physicsMs: this.physicsMs,
         ballCount: this.balls.length,
+        ringCount: this.ringSystem.count,
         pixelWidth: this.drawBufferSize.x,
         pixelHeight: this.drawBufferSize.y,
         dpr: this.scene.renderer.getPixelRatio(),
@@ -148,23 +213,114 @@ export class GameApp {
     }
   }
 
-  /** 屏幕坐标 → 地面平面求交（3D 射线，不是二维距离）。 */
-  private pickGroundPoint(clientX: number, clientY: number): { x: number; z: number } | null {
-    const ndc = new THREE.Vector2(
-      (clientX / window.innerWidth) * 2 - 1,
-      -(clientY / window.innerHeight) * 2 + 1,
-    );
-    this.raycaster.setFromCamera(ndc, this.scene.camera);
-    const hit = new THREE.Vector3();
-    if (!this.raycaster.ray.intersectPlane(this.groundPlane, hit)) return null;
-    // 落点限制在围栏内（玩家应能看到球落在栏中的碰撞结果）
-    const { width, depth } = gameConfig.fence;
-    const margin = gameConfig.ball.radius + 0.1;
-    return {
-      x: THREE.MathUtils.clamp(hit.x, -width / 2 + margin, width / 2 - margin),
-      z: THREE.MathUtils.clamp(hit.z, -depth / 2 + margin, depth / 2 - margin),
+  // ---------------- P0-1 投掷 ----------------
+
+  /** 固定投掷：所有初始条件写死，可重复复现（无随机项）。 */
+  private throwPreset(preset: ThrowPreset): void {
+    const tuning = this.ringSystem.tuning;
+    const rotation = horizontalRingRotation();
+    const origin = {
+      x: gameConfig.throwOrigin.x,
+      y: gameConfig.ring.releaseHeight,
+      z: gameConfig.throwOrigin.z,
     };
+    const neck = getGooseNeckWorldPosition(this.testGoose);
+    let spec: RingLaunchSpec;
+
+    if (preset === 'drop' || preset === 'offset') {
+      const offset = preset === 'offset' ? gameConfig.ring.offsetDistance : 0;
+      spec = {
+        position: {
+          x: neck.x + offset,
+          y: preset === 'offset' ? gameConfig.ring.offsetHeight : gameConfig.ring.dropHeight,
+          z: neck.z,
+        },
+        rotation,
+        linvel: { x: 0, y: 0, z: 0 },
+        angvel: { x: 0, y: 0, z: 0 },
+      };
+    } else if (preset === 'fence') {
+      // 朝远侧围栏低平抛出：验证薄栏碰撞与 CCD 不穿透。
+      const speed = tuning.speed * PRESET_SPEED_FACTOR.fence;
+      const elevation = (FENCE_PRESET_ELEVATION_DEG * Math.PI) / 180;
+      spec = {
+        position: origin,
+        rotation,
+        linvel: {
+          x: 0,
+          y: Math.sin(elevation) * speed,
+          z: -Math.cos(elevation) * speed,
+        },
+        angvel: { x: 0, y: tuning.spin, z: 0 },
+      };
+    } else {
+      const speed = tuning.speed * PRESET_SPEED_FACTOR[preset];
+      spec = {
+        position: origin,
+        rotation,
+        linvel: velocityToward(origin, neck, speed, tuning.elevationDeg),
+        angvel: { x: 0, y: tuning.spin, z: 0 },
+      };
+    }
+
+    this.launchRing(spec);
   }
+
+  private launchRing(spec: RingLaunchSpec): void {
+    this.lastThrow = spec;
+    this.ringSystem.launch(spec);
+  }
+
+  private replayThrow(): void {
+    if (this.lastThrow) this.ringSystem.launch(this.lastThrow);
+  }
+
+  private onPointerDown(e: PointerEvent, canvas: HTMLCanvasElement): void {
+    this.drag = { startX: e.clientX, startY: e.clientY, power: 0, yaw: 0 };
+    canvas.setPointerCapture(e.pointerId);
+    this.panel.setDragPower(0);
+  }
+
+  private onPointerMove(e: PointerEvent): void {
+    if (!this.drag) return;
+    const dx = e.clientX - this.drag.startX;
+    const dy = e.clientY - this.drag.startY;
+    this.drag.power = THREE.MathUtils.clamp(Math.hypot(dx, dy) / 360, 0, 1);
+    // 水平拖动决定左右偏转，限制在 ±34° 内，避免直接甩出场地。
+    this.drag.yaw = THREE.MathUtils.clamp(dx / 420, -0.6, 0.6);
+    this.panel.setDragPower(this.drag.power);
+  }
+
+  private onPointerUp(e: PointerEvent): void {
+    if (!this.drag) return;
+    const dx = e.clientX - this.drag.startX;
+    const dy = e.clientY - this.drag.startY;
+    const power = THREE.MathUtils.clamp(Math.hypot(dx, dy) / 360, 0, 1);
+    const yaw = THREE.MathUtils.clamp(dx / 420, -0.6, 0.6);
+    this.drag = null;
+    this.panel.setDragPower(null);
+    if (power < 0.05) return; // 轻点不投掷，避免误触
+
+    const tuning = this.ringSystem.tuning;
+    const speed = tuning.speed * (0.35 + 0.65 * power);
+    this.launchRing({
+      position: {
+        x: gameConfig.throwOrigin.x,
+        y: gameConfig.ring.releaseHeight,
+        z: gameConfig.throwOrigin.z,
+      },
+      rotation: horizontalRingRotation(),
+      linvel: velocityWithYaw(speed, tuning.elevationDeg, yaw),
+      angvel: { x: 0, y: tuning.spin, z: 0 },
+    });
+  }
+
+  private cancelDrag(): void {
+    this.drag = null;
+    this.panel.setDragPower(null);
+  }
+
+  // ---------------- P0-0 遗留工具 ----------------
 
   private spawnBall(x: number, z: number): void {
     const body = this.physics.spawnBall(x, z);
@@ -210,7 +366,7 @@ export class GameApp {
    * 纯视觉演示（RingPreview），不生成刚体、不判命中、不计分。
    */
   private previewRing(depth: 'near' | 'far', loop = false): void {
-    const entry = gameConfig.goose.layout.reduce((best, cur) =>
+    const entry = this.activeLayout.reduce((best, cur) =>
       depth === 'near' ? (cur.z > best.z ? cur : best) : (cur.z < best.z ? cur : best),
     );
     const { x, z } = gameConfig.throwOrigin;
@@ -236,4 +392,9 @@ export class GameApp {
       mesh.quaternion.set(r.x, r.y, r.z, r.w);
     }
   }
+}
+
+/** 离玩家最近的鹅（Z 最大）作为 P0-1 单鹅实验目标。 */
+function pickTestGoose(): GooseLayoutEntry {
+  return gameConfig.goose.layout.reduce((best, cur) => (cur.z > best.z ? cur : best));
 }

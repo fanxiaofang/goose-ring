@@ -7,7 +7,7 @@ async function boot(): Promise<void> {
   try {
     const app = new GameApp();
     await app.start(canvas);
-    console.log('[goose-ring] P0-0 启动成功：Three.js + Rapier WASM 已初始化');
+    console.log('[goose-ring] P0-1 启动成功：Three.js + Rapier WASM 已初始化');
   } catch (err) {
     // Rapier WASM 加载失败等致命错误：显式呈现，不在控制台静默刷错
     const fatal = document.getElementById('fatal-error');

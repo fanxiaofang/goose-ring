@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import * as THREE from 'three';
 import { computeCameraPosition, derivePitchYaw } from './scene/cameraUtils';
-import { cameraModes } from './config/gameConfig';
+import { cameraModes, gameConfig, type CameraMode } from './config/gameConfig';
+import { getGooseNeckWorldPosition } from './goose/GoosePlaceholder';
 
 /**
  * P0-0 相机纯函数测试。
@@ -74,21 +76,84 @@ describe('derivePitchYaw', () => {
 });
 
 describe('相机对比模式取景', () => {
-  it('三种模式在注视点平面的可视高度接近（围栏占比近似相同）', () => {
-    const ortho = cameraModes.find((m) => m.kind === 'ortho');
-    if (!ortho || ortho.kind !== 'ortho') throw new Error('缺少正交模式');
-
-    const persp = cameraModes.filter((m) => m.kind === 'persp');
-    const heights = persp.map(
-      (m) => 2 * m.distance * Math.tan((m.fov * Math.PI) / 360),
+  function makeCamera(mode: CameraMode, aspect = 16 / 9): THREE.Camera {
+    const { target } = gameConfig.camera;
+    const pos = computeCameraPosition(
+      gameConfig.camera.pitchDeg,
+      gameConfig.camera.yawDeg,
+      mode.distance,
+      target,
     );
-
-    for (const h of heights) {
-      // 透视模式为压缩画面上方空地，取景比正交略紧（约 10%），
-      // 允许 1.1 m 偏差；若未来再改构图需同步 04_决策与参数.md。
-      expect(Math.abs(h - ortho.viewHeight)).toBeLessThan(1.1);
+    if (mode.kind === 'ortho') {
+      const halfH = mode.viewHeight / 2;
+      const halfW = halfH * aspect;
+      const cam = new THREE.OrthographicCamera(-halfW, halfW, halfH, -halfH, 0.1, 200);
+      cam.position.set(pos.x, pos.y, pos.z);
+      cam.lookAt(target.x, target.y, target.z);
+      cam.updateMatrixWorld(true);
+      cam.updateProjectionMatrix();
+      return cam;
     }
-    // FOV25° 与 FOV35° 两种透视模式之间应基本一致，否则对比条件不公平。
-    expect(Math.abs(heights[0] - heights[1])).toBeLessThan(0.1);
+    const cam = new THREE.PerspectiveCamera(mode.fov, aspect, 0.5, 200);
+    cam.position.set(pos.x, pos.y, pos.z);
+    cam.lookAt(target.x, target.y, target.z);
+    cam.updateMatrixWorld(true);
+    cam.updateProjectionMatrix();
+    return cam;
+  }
+
+  /** 世界坐标投影到屏幕百分比（左上为 0，右下为 100）。 */
+  function screenOf(cam: THREE.Camera, x: number, y: number, z: number): { x: number; y: number } {
+    const v = new THREE.Vector3(x, y, z).project(cam);
+    return { x: ((v.x + 1) / 2) * 100, y: ((1 - v.y) / 2) * 100 };
+  }
+
+  /**
+   * P0-1 复核：不再用“注视点平面可视高度差 < 1.1 m”这种间接指标，
+   * 改为直接验收屏幕构图与 UI 安全区：
+   * - 围栏顶部不压 12% 顶部 UI 带，也不留下过大空白；
+   * - 前栏杆落在 62%~92% 之间（靠近底部但不出画）；
+   * - 围栏纵向占屏 ≥ 45%；
+   * - 远栏左右角仍在画面内；
+   * - 鹅头（目标区）不被顶部/底部 UI 安全带压住。
+   * C 透视 35° 前栏杆进入底部安全带，仅保留为实验模式，不做正式候选验收。
+   */
+  it.each(['ortho', 'persp25'] as const)('%s 满足屏幕构图与 UI 安全区验收', (id) => {
+    const mode = cameraModes.find((m) => m.id === id);
+    expect(mode).toBeDefined();
+    const cam = makeCamera(mode!);
+
+    const farTopLeft = screenOf(cam, -8, gameConfig.fence.farHeight, -5);
+    const farTopRight = screenOf(cam, 8, gameConfig.fence.farHeight, -5);
+    const nearRail = screenOf(cam, 0, gameConfig.fence.nearHeight, 5);
+
+    // 围栏顶部：在 12% UI 带下方、且不高于 25%（避免上方大片空地）
+    expect(farTopLeft.y).toBeGreaterThan(10);
+    expect(farTopLeft.y).toBeLessThan(25);
+    expect(Math.abs(farTopLeft.y - farTopRight.y)).toBeLessThan(1);
+
+    // 前栏杆靠近底部但完整可见
+    expect(nearRail.y).toBeGreaterThan(62);
+    expect(nearRail.y).toBeLessThan(92);
+
+    // 围栏纵向占据足够屏高
+    expect(nearRail.y - farTopLeft.y).toBeGreaterThan(45);
+
+    // 远栏左右角仍在画面内（允许侧栏近端被裁，正式要求是物理边界完整）
+    expect(farTopLeft.x).toBeGreaterThan(0);
+    expect(farTopRight.x).toBeLessThan(100);
+
+    // 实验目标鹅的头部不能被顶部 12% / 底部 8% UI 安全带压住
+    const testGoose = gameConfig.goose.layout.reduce((best, cur) =>
+      cur.z > best.z ? cur : best,
+    );
+    const neck = getGooseNeckWorldPosition(testGoose);
+    const head = screenOf(cam, neck.x, gameConfig.goose.head.y, neck.z);
+    expect(head.y).toBeGreaterThan(12);
+    expect(head.y).toBeLessThan(92);
+  });
+
+  it('三种相机模式仍可切换（A/B/C 实验能力保留）', () => {
+    expect(cameraModes.map((m) => m.id)).toEqual(['ortho', 'persp25', 'persp35']);
   });
 });

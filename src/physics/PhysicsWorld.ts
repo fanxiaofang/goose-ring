@@ -1,6 +1,8 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { gameConfig } from '../config/gameConfig';
+import type { GooseLayoutEntry } from '../goose/GoosePlaceholder';
+import { createRingRigidBody, type RingBodyOptions } from '../ring/ringBody';
 
 /**
  * Rapier 物理世界封装：静态地面/围栏/灰盒鹅 Collider、测试球投放、固定步进、碰撞线框调试。
@@ -17,7 +19,14 @@ export class PhysicsWorld {
     this.debugLines = debugLines;
   }
 
-  static async create(scene: THREE.Scene): Promise<PhysicsWorld> {
+  /**
+   * @param gooseLayout 参与碰撞的鹅布局；默认 8 只，P0-1 可传单只测试鹅。
+   * 视觉与碰撞使用同一份布局，避免“看得见却没碰撞”。
+   */
+  static async create(
+    scene: THREE.Scene,
+    gooseLayout: readonly GooseLayoutEntry[] = gameConfig.goose.layout,
+  ): Promise<PhysicsWorld> {
     await RAPIER.init(); // WASM 初始化；失败会抛异常，由上层展示 fatal error
     const world = new RAPIER.World({
       x: 0,
@@ -35,7 +44,7 @@ export class PhysicsWorld {
 
     const pw = new PhysicsWorld(world, debugLines);
     pw.buildStaticColliders();
-    pw.buildGooseColliders();
+    pw.buildGooseColliders(gooseLayout);
     return pw;
   }
 
@@ -73,8 +82,8 @@ export class PhysicsWorld {
   }
 
   /** 灰盒鹅静态碰撞体：身体球 + 颈胶囊 + 头球，与视觉占位体使用同一份配置。 */
-  private buildGooseColliders(): void {
-    const { layout, body, neck, head, collider } = gameConfig.goose;
+  private buildGooseColliders(layout: readonly GooseLayoutEntry[]): void {
+    const { body, neck, head, collider } = gameConfig.goose;
     for (const entry of layout) {
       const half = entry.rotY / 2;
       const gooseBody = this.world.createRigidBody(
@@ -119,6 +128,14 @@ export class PhysicsWorld {
       body,
     );
     return body;
+  }
+
+  /**
+   * 投放一个真实有孔的套圈刚体（16 段胶囊复合 Collider）。
+   * 使用与单元测试相同的 createRingRigidBody，保证运行时与测试一致。
+   */
+  spawnRing(options: RingBodyOptions): RAPIER.RigidBody {
+    return createRingRigidBody(this.world, options);
   }
 
   removeBody(body: RAPIER.RigidBody): void {
