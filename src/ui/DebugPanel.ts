@@ -19,6 +19,17 @@ export interface FrameStats {
   fps: number;
   physicsMs: number;
   ballCount: number;
+  /** 当前渲染缓冲尺寸（不是 CSS 尺寸）。 */
+  pixelWidth: number;
+  pixelHeight: number;
+  /** devicePixelRatio 实际生效值（受上限限制）。 */
+  dpr: number;
+  /** 每帧 draw call 数。 */
+  drawCalls: number;
+  /** 每帧三角形数。 */
+  triangles: number;
+  /** 方向光阴影贴图边长。 */
+  shadowMapSize: number;
 }
 
 /** 简易 DOM 调试面板（正式 UI 后续会替换；P0-0 只用于观察与验证）。 */
@@ -132,7 +143,9 @@ export class DebugPanel {
 
   updateStats(stats: FrameStats): void {
     this.statsEl.textContent =
-      `FPS ${stats.fps.toFixed(0)} | 物理 ${stats.physicsMs.toFixed(2)}ms | 球 ${stats.ballCount}`;
+      `FPS ${stats.fps.toFixed(0)} | 物理 ${stats.physicsMs.toFixed(2)}ms | 球 ${stats.ballCount}\n` +
+      `绘制 ${stats.drawCalls} / ${(stats.triangles / 1000).toFixed(1)}k 三角 | ` +
+      `${stats.pixelWidth}×${stats.pixelHeight} @DPR${stats.dpr.toFixed(2)} | 阴影 ${stats.shadowMapSize}`;
   }
 
   /** 显示相机实际姿态与投影参数，并同步按钮高亮。 */

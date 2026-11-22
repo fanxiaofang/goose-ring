@@ -38,7 +38,7 @@ export class GameScene {
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, gameConfig.render.maxPixelRatio));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
@@ -64,7 +64,7 @@ export class GameScene {
     const dir = new THREE.DirectionalLight(0xfff1da, 1.35);
     dir.position.set(-10, 16, 9); // 侧向斜光：柱子与鹅产生可辨认的投影
     dir.castShadow = true;
-    dir.shadow.mapSize.set(2048, 2048);
+    dir.shadow.mapSize.set(gameConfig.render.shadowMapSize, gameConfig.render.shadowMapSize);
     dir.shadow.camera.left = -16;
     dir.shadow.camera.right = 16;
     dir.shadow.camera.top = 16;

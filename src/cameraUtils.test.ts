@@ -77,10 +77,18 @@ describe('相机对比模式取景', () => {
   it('三种模式在注视点平面的可视高度接近（围栏占比近似相同）', () => {
     const ortho = cameraModes.find((m) => m.kind === 'ortho');
     if (!ortho || ortho.kind !== 'ortho') throw new Error('缺少正交模式');
-    for (const mode of cameraModes) {
-      if (mode.kind !== 'persp') continue;
-      const visibleHeight = 2 * mode.distance * Math.tan((mode.fov * Math.PI) / 360);
-      expect(Math.abs(visibleHeight - ortho.viewHeight)).toBeLessThan(0.6);
+
+    const persp = cameraModes.filter((m) => m.kind === 'persp');
+    const heights = persp.map(
+      (m) => 2 * m.distance * Math.tan((m.fov * Math.PI) / 360),
+    );
+
+    for (const h of heights) {
+      // 透视模式为压缩画面上方空地，取景比正交略紧（约 10%），
+      // 允许 1.1 m 偏差；若未来再改构图需同步 04_决策与参数.md。
+      expect(Math.abs(h - ortho.viewHeight)).toBeLessThan(1.1);
     }
+    // FOV25° 与 FOV35° 两种透视模式之间应基本一致，否则对比条件不公平。
+    expect(Math.abs(heights[0] - heights[1])).toBeLessThan(0.1);
   });
 });

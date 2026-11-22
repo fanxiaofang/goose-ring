@@ -36,6 +36,8 @@ export class GameApp {
 
   private raycaster = new THREE.Raycaster();
   private groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  /** 复用向量，避免每 0.25 s 统计时新建对象。 */
+  private drawBufferSize = new THREE.Vector2();
 
   async start(canvas: HTMLCanvasElement): Promise<void> {
     this.scene = new GameScene(canvas);
@@ -129,10 +131,18 @@ export class GameApp {
       this.fps = this.frameCount / this.statTimer;
       this.frameCount = 0;
       this.statTimer = 0;
+      this.scene.renderer.getDrawingBufferSize(this.drawBufferSize);
+      const renderInfo = this.scene.renderer.info.render;
       const stats: FrameStats = {
         fps: this.fps,
         physicsMs: this.physicsMs,
         ballCount: this.balls.length,
+        pixelWidth: this.drawBufferSize.x,
+        pixelHeight: this.drawBufferSize.y,
+        dpr: this.scene.renderer.getPixelRatio(),
+        drawCalls: renderInfo.calls,
+        triangles: renderInfo.triangles,
+        shadowMapSize: gameConfig.render.shadowMapSize,
       };
       this.panel.updateStats(stats);
     }

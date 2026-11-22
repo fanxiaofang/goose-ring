@@ -71,6 +71,7 @@ body {
   margin-top: 4px;
   font-family: Consolas, monospace;
   color: #9fd49f;
+  white-space: pre-line;
 }
 
 #debug-panel .camera-info {

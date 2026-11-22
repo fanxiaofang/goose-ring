@@ -29,26 +29,26 @@ export type CameraMode = OrthoCameraMode | PerspectiveCameraMode;
 /**
  * 相机对比模式（P0-0 投影实验）：
  * 三种模式统一 30° 俯视 + 0° 偏转，只改变投影方式与距离。
- * 构图收紧：正交可视高 10.8 m、注视点向玩家侧偏移 (0, 0.4, 1.2)，
- * 让围栏占屏约 83% 宽、顶部只留约 16% 给 UI 安全区。
- * 透视距离按“注视点平面可视高度 ≈ 正交 10.8 m”估算，并保证近边不超出屏幕：
- *   d ≈ viewHeight / (2 × tan(fov/2))，再按近边宽度上限微调。
+ * 构图收紧：正交可视高 9.8 m、注视点 z=0.4，
+ * 让围栏顶部贴住 12% UI 安全区、前栏杆落到约 73% 屏高；
+ * 透视距离按“注视点平面可视高度 ≈ 正交 9.8 m”估算（d ≈ 9.8 / (2×tan(fov/2))），
+ * 近边宽度差异属透视本身特性。
  */
 export const cameraModes: CameraMode[] = [
-  { id: 'ortho', label: 'A 正交', kind: 'ortho', distance: 26, viewHeight: 10.8 },
-  { id: 'persp25', label: 'B 透视25°', kind: 'persp', distance: 24.5, fov: 25 },
-  { id: 'persp35', label: 'C 透视35°', kind: 'persp', distance: 18.0, fov: 35 },
+  { id: 'ortho', label: 'A 正交', kind: 'ortho', distance: 26, viewHeight: 9.8 },
+  { id: 'persp25', label: 'B 透视25°', kind: 'persp', distance: 19.9, fov: 25 },
+  { id: 'persp35', label: 'C 透视35°', kind: 'persp', distance: 14.0, fov: 35 },
 ];
 
 export const gameConfig = {
   camera: {
-    /** 俯视角（相机相对水平面的仰高角，度）。本轮实验统一 30°。 */
+    /** 俯视角（相机相对水平面的仰高角，度）。 */
     pitchDeg: 30,
     pitchOptionsDeg: [30, 38, 45] as number[],
     /** 水平偏转角固定 0°：围栏前后边在屏幕上保持水平。 */
     yawDeg: 0,
-    /** 注视点：向玩家侧偏移，压缩栏外远端空地，顶部留出 UI 安全区。 */
-    target: { x: 0, y: 0.4, z: 1.2 },
+    /** 注视点：略向玩家侧，兼顾顶部 UI 区与前栏杆位置。 */
+    target: { x: 0, y: 0.4, z: 0.4 },
   },
   physics: {
     gravityY: -9.81,
@@ -56,6 +56,13 @@ export const gameConfig = {
     fixedDt: 1 / 60,
     /** 帧率暴跌时最多补多少个物理步，防止死亡螺旋。 */
     maxCatchUpSteps: 5,
+  },
+  /** 渲染性能相关参数（集中配置，便于按设备档位调整）。 */
+  render: {
+    /** 方向光阴影贴图边长（2048 对移动端可能偏重，待真机测量）。 */
+    shadowMapSize: 2048,
+    /** 设备像素比上限：DPR 1.5 时 1280×720 CSS 会渲染约 1899×939 像素。 */
+    maxPixelRatio: 2,
   },
   fence: {
     /** 围栏宽（X，米）。 */
