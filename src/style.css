@@ -97,7 +97,8 @@ body {
   font-size: 56px;
 }
 
-@media (orientation: portrait) {
+/* 仅触屏设备（pointer: coarse）竖屏时提示旋转；电脑浏览器窗口变窄不拦截 */
+@media (orientation: portrait) and (pointer: coarse) {
   #rotate-overlay {
     display: flex;
   }
