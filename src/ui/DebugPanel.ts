@@ -9,6 +9,10 @@ export interface DebugPanelCallbacks {
   onToggleDebugLines: (visible: boolean) => void;
   /** 构图预览：隐藏红色测试球，避免干扰三种相机模式的对比截图。 */
   onTogglePreviewClean: (clean: boolean) => void;
+  /** 套圈飞行预览（纯视觉）：预览近处/远处鹅。 */
+  onPreviewRing: (depth: 'near' | 'far') => void;
+  /** 显示/隐藏正式 UI 安全区参考带。 */
+  onToggleUiSafeGuide: (visible: boolean) => void;
 }
 
 export interface FrameStats {
@@ -63,6 +67,16 @@ export class DebugPanel {
     );
     root.appendChild(actionRow);
 
+    // 套圈飞行预览（近 / 远）
+    const previewRingRow = document.createElement('div');
+    previewRingRow.className = 'row';
+    previewRingRow.append(this.label('套圈预览'));
+    previewRingRow.append(
+      this.button('近处鹅', () => this.cb.onPreviewRing('near')),
+      this.button('远处鹅', () => this.cb.onPreviewRing('far')),
+    );
+    root.appendChild(previewRingRow);
+
     // 构图预览：隐藏测试球
     const previewRow = document.createElement('div');
     previewRow.className = 'row';
@@ -90,6 +104,20 @@ export class DebugPanel {
     wireLabel.textContent = '显示';
     debugRow.append(wire, wireLabel);
     root.appendChild(debugRow);
+
+    // UI 安全区参考带
+    const safeRow = document.createElement('div');
+    safeRow.className = 'row';
+    safeRow.append(this.label('UI 安全区'));
+    const safe = document.createElement('input');
+    safe.type = 'checkbox';
+    safe.id = 'safe-toggle';
+    safe.addEventListener('change', () => this.cb.onToggleUiSafeGuide(safe.checked));
+    const safeLabel = document.createElement('label');
+    safeLabel.htmlFor = 'safe-toggle';
+    safeLabel.textContent = '显示';
+    safeRow.append(safe, safeLabel);
+    root.appendChild(safeRow);
 
     // 运行统计
     this.statsEl = document.createElement('div');

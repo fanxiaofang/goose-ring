@@ -86,6 +86,64 @@ body {
   opacity: 0.7;
 }
 
+/* ---- 正式 UI 安全区参考带（仅调试参考，不属于正式界面） ---- */
+#ui-safe-guide {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+}
+
+#ui-safe-guide[hidden] {
+  display: none;
+}
+
+#ui-safe-guide .safe-band {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  border: 1px dashed rgba(255, 255, 255, 0.75);
+  color: #fff;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+#ui-safe-guide .safe-band span {
+  padding: 1px 8px;
+  border-radius: 3px;
+  background: rgba(20, 24, 30, 0.45);
+}
+
+/* 顶部 12%：正式标题 / 分数 / 剩余圈数 */
+#ui-safe-guide .safe-top {
+  top: 0;
+  height: 12%;
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(255, 210, 63, 0.16) 0 10px,
+    rgba(255, 210, 63, 0.05) 10px 20px
+  );
+  border-width: 0 0 1px 0;
+  align-items: center;
+}
+
+/* 底部 8%：操作提示（不得覆盖投掷热区，仅作参考） */
+#ui-safe-guide .safe-bottom {
+  bottom: 0;
+  height: 8%;
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(53, 214, 232, 0.16) 0 10px,
+    rgba(53, 214, 232, 0.05) 10px 20px
+  );
+  border-width: 1px 0 0 0;
+}
+
 /* ---- 竖屏旋转提示 ---- */
 #rotate-overlay {
   position: fixed;

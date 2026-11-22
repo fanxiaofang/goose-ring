@@ -3,6 +3,8 @@ import { gameConfig, cameraModes, type CameraModeId } from '../config/gameConfig
 import { GameScene } from '../scene/GameScene';
 import { PhysicsWorld } from '../physics/PhysicsWorld';
 import { DebugPanel, FrameStats } from '../ui/DebugPanel';
+import { RingPreview } from '../ring/RingPreview';
+import { getGooseNeckWorldPosition } from '../goose/GoosePlaceholder';
 
 interface BallEntry {
   body: import('@dimforge/rapier3d-compat').RigidBody;
@@ -11,12 +13,13 @@ interface BallEntry {
 
 /**
  * 游戏生命周期主控：固定物理步长循环 + 渲染 + 输入 + 调试。
- * P0-0 范围：场景、相机、测试球投放；无鹅、无套圈、无玩法。
+ * P0-0 范围：场景、相机、测试球投放、纯视觉套圈预览；无正式玩法与命中判定。
  */
 export class GameApp {
   private scene!: GameScene;
   private physics!: PhysicsWorld;
   private panel!: DebugPanel;
+  private ringPreview!: RingPreview;
 
   private balls: BallEntry[] = [];
   private ballGeo = new THREE.SphereGeometry(gameConfig.ball.radius, 24, 16);
@@ -37,6 +40,7 @@ export class GameApp {
   async start(canvas: HTMLCanvasElement): Promise<void> {
     this.scene = new GameScene(canvas);
     this.physics = await PhysicsWorld.create(this.scene.scene);
+    this.ringPreview = new RingPreview(this.scene.scene);
 
     // 支持 URL 指定相机模式（便于固定 1280×720 截图对比）：?camera=ortho|persp25|persp35
     const requested = new URLSearchParams(window.location.search).get('camera');
@@ -57,8 +61,26 @@ export class GameApp {
       onClearBalls: () => this.clearBalls(),
       onToggleDebugLines: (visible) => this.physics.setDebugVisible(visible),
       onTogglePreviewClean: (clean) => this.setPreviewClean(clean),
+      onPreviewRing: (depth) => this.previewRing(depth),
+      onToggleUiSafeGuide: (visible) => this.setUiSafeGuide(visible),
     });
     this.panel.setCameraState(this.scene.getCameraState());
+
+    // ?preview=near|far：循环预览，便于固定角度截图观察飞行纵深
+    // &hold=1：直接跳到落点保持阶段，便于截取“圈停在脖子处”的验证画面
+    const previewParam = new URLSearchParams(window.location.search).get('preview');
+    if (previewParam === 'near' || previewParam === 'far') {
+      if (new URLSearchParams(window.location.search).get('hold') === '1') {
+        this.previewRing(previewParam, false);
+        this.ringPreview.freezeAtTarget();
+      } else {
+        this.previewRing(previewParam, true);
+      }
+    }
+    // ?safe=1：显示正式 UI 安全区参考带，便于截图核对
+    if (new URLSearchParams(window.location.search).get('safe') === '1') {
+      this.setUiSafeGuide(true);
+    }
 
     // ?ui=0：隐藏调试面板，便于截取纯场景构图（面板信息可由 URL 相机参数复现）
     if (new URLSearchParams(window.location.search).get('ui') === '0') {
@@ -96,6 +118,7 @@ export class GameApp {
     if (steps > 0) this.physicsMs = performance.now() - t0;
 
     this.syncBalls();
+    this.ringPreview.update(frameDt);
     this.physics.updateDebugLines();
     this.scene.render();
 
@@ -170,6 +193,28 @@ export class GameApp {
     for (const b of this.balls) {
       b.mesh.visible = !clean;
     }
+  }
+
+  /**
+   * 套圈飞行预览：按 Z 选最近/最远的鹅，瞄准其脖子中段。
+   * 纯视觉演示（RingPreview），不生成刚体、不判命中、不计分。
+   */
+  private previewRing(depth: 'near' | 'far', loop = false): void {
+    const entry = gameConfig.goose.layout.reduce((best, cur) =>
+      depth === 'near' ? (cur.z > best.z ? cur : best) : (cur.z < best.z ? cur : best),
+    );
+    const { x, z } = gameConfig.throwOrigin;
+    this.ringPreview.start(
+      { x, y: gameConfig.ringPreview.releaseHeight, z },
+      getGooseNeckWorldPosition(entry),
+      loop,
+    );
+  }
+
+  /** 正式 UI 安全区参考带（仅调试参考，不属于正式界面）。 */
+  private setUiSafeGuide(visible: boolean): void {
+    const el = document.getElementById('ui-safe-guide');
+    if (el) el.hidden = !visible;
   }
 
   /** 渲染网格与物理刚体每帧同步（AGENTS.md §6 的最小体现）。 */
