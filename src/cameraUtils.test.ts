@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { computeCameraPosition, derivePitchYaw } from './scene/cameraUtils';
+import { cameraModes } from './config/gameConfig';
 
 /**
  * P0-0 相机纯函数测试。
@@ -68,6 +69,18 @@ describe('derivePitchYaw', () => {
         expect(pose.yawDeg).toBeCloseTo(yaw, 6);
         expect(pose.distance).toBeCloseTo(26, 6);
       }
+    }
+  });
+});
+
+describe('相机对比模式取景', () => {
+  it('三种模式在注视点平面的可视高度接近（围栏占比近似相同）', () => {
+    const ortho = cameraModes.find((m) => m.kind === 'ortho');
+    if (!ortho || ortho.kind !== 'ortho') throw new Error('缺少正交模式');
+    for (const mode of cameraModes) {
+      if (mode.kind !== 'persp') continue;
+      const visibleHeight = 2 * mode.distance * Math.tan((mode.fov * Math.PI) / 360);
+      expect(Math.abs(visibleHeight - ortho.viewHeight)).toBeLessThan(0.6);
     }
   });
 });

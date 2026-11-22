@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { gameConfig } from '../config/gameConfig';
+import { gameConfig, cameraModes, type CameraModeId } from '../config/gameConfig';
 import { GameScene } from '../scene/GameScene';
 import { PhysicsWorld } from '../physics/PhysicsWorld';
 import { DebugPanel, FrameStats } from '../ui/DebugPanel';
@@ -21,6 +21,8 @@ export class GameApp {
   private balls: BallEntry[] = [];
   private ballGeo = new THREE.SphereGeometry(gameConfig.ball.radius, 24, 16);
   private ballMat = new THREE.MeshLambertMaterial({ color: '#d94f4f' });
+  /** 构图预览：隐藏测试球网格（物理仍在运行）。 */
+  private previewClean = false;
 
   private accumulator = 0;
   private lastTime = 0;
@@ -36,20 +38,33 @@ export class GameApp {
     this.scene = new GameScene(canvas);
     this.physics = await PhysicsWorld.create(this.scene.scene);
 
+    // 支持 URL 指定相机模式（便于固定 1280×720 截图对比）：?camera=ortho|persp25|persp35
+    const requested = new URLSearchParams(window.location.search).get('camera');
+    if (requested && cameraModes.some((m) => m.id === requested)) {
+      this.scene.setCameraMode(requested as CameraModeId);
+    }
+
     this.panel = new DebugPanel({
       onPitchChange: (deg) => {
         this.scene.setCameraPitch(deg);
-        this.panel.setCameraPose(this.scene.getCameraPose());
+        this.panel.setCameraState(this.scene.getCameraState());
       },
-      onYawChange: (deg) => {
-        this.scene.setCameraYaw(deg);
-        this.panel.setCameraPose(this.scene.getCameraPose());
+      onModeChange: (id) => {
+        this.scene.setCameraMode(id);
+        this.panel.setCameraState(this.scene.getCameraState());
       },
       onSpawnBall: () => this.spawnBallNearCenter(),
       onClearBalls: () => this.clearBalls(),
       onToggleDebugLines: (visible) => this.physics.setDebugVisible(visible),
+      onTogglePreviewClean: (clean) => this.setPreviewClean(clean),
     });
-    this.panel.setCameraPose(this.scene.getCameraPose());
+    this.panel.setCameraState(this.scene.getCameraState());
+
+    // ?ui=0：隐藏调试面板，便于截取纯场景构图（面板信息可由 URL 相机参数复现）
+    if (new URLSearchParams(window.location.search).get('ui') === '0') {
+      const panelEl = document.getElementById('debug-panel');
+      if (panelEl) panelEl.style.display = 'none';
+    }
 
     // 鼠标 / 触摸统一走 Pointer Events（AGENTS.md §9：触摸和鼠标同逻辑）
     canvas.addEventListener('pointerdown', (e) => {
@@ -122,6 +137,7 @@ export class GameApp {
     const body = this.physics.spawnBall(x, z);
     const mesh = new THREE.Mesh(this.ballGeo, this.ballMat);
     mesh.castShadow = true;
+    mesh.visible = !this.previewClean;
     this.scene.scene.add(mesh);
     this.balls.push({ body, mesh });
 
@@ -147,6 +163,13 @@ export class GameApp {
       this.scene.scene.remove(b.mesh);
     }
     this.balls = [];
+  }
+
+  private setPreviewClean(clean: boolean): void {
+    this.previewClean = clean;
+    for (const b of this.balls) {
+      b.mesh.visible = !clean;
+    }
   }
 
   /** 渲染网格与物理刚体每帧同步（AGENTS.md §6 的最小体现）。 */

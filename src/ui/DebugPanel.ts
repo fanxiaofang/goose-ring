@@ -1,12 +1,14 @@
-import { gameConfig } from '../config/gameConfig';
-import type { CameraPose } from '../scene/cameraUtils';
+import { gameConfig, cameraModes, type CameraModeId } from '../config/gameConfig';
+import type { CameraState } from '../scene/cameraUtils';
 
 export interface DebugPanelCallbacks {
   onPitchChange: (deg: number) => void;
-  onYawChange: (deg: number) => void;
+  onModeChange: (id: CameraModeId) => void;
   onSpawnBall: () => void;
   onClearBalls: () => void;
   onToggleDebugLines: (visible: boolean) => void;
+  /** 构图预览：隐藏红色测试球，避免干扰三种相机模式的对比截图。 */
+  onTogglePreviewClean: (clean: boolean) => void;
 }
 
 export interface FrameStats {
@@ -27,30 +29,27 @@ export class DebugPanel {
 
     const title = document.createElement('div');
     title.className = 'panel-title';
-    title.textContent = 'P0-0 调试面板';
+    title.textContent = 'P0-0 相机实验';
     root.appendChild(title);
 
-    // 相机俯视角三档
-    const pitchRow = this.optionRow(
-      '俯视角',
-      'pitch',
-      gameConfig.camera.pitchOptionsDeg,
-      gameConfig.camera.pitchDeg,
-      (deg) => this.cb.onPitchChange(deg),
-    );
+    // 相机投影模式 A/B/C
+    const modeRow = document.createElement('div');
+    modeRow.className = 'row';
+    modeRow.append(this.label('相机'));
+    for (const mode of cameraModes) {
+      const btn = document.createElement('button');
+      btn.textContent = mode.label;
+      btn.dataset.mode = mode.id;
+      btn.addEventListener('click', () => this.cb.onModeChange(mode.id));
+      modeRow.appendChild(btn);
+    }
+    root.appendChild(modeRow);
+
+    // 俯视角三档（本轮默认 30°）
+    const pitchRow = this.optionRow('俯视角', gameConfig.camera.pitchOptionsDeg);
     root.appendChild(pitchRow);
 
-    // 相机水平偏转角三档
-    const yawRow = this.optionRow(
-      '水平偏转',
-      'yaw',
-      gameConfig.camera.yawOptionsDeg,
-      gameConfig.camera.yawDeg,
-      (deg) => this.cb.onYawChange(deg),
-    );
-    root.appendChild(yawRow);
-
-    // 相机真实姿态回显（由相机位置反解，不是按钮状态的复制）
+    // 相机真实姿态回显（由相机位置反解）
     this.cameraEl = document.createElement('div');
     this.cameraEl.className = 'camera-info';
     root.appendChild(this.cameraEl);
@@ -58,10 +57,25 @@ export class DebugPanel {
     // 投球 / 清空
     const actionRow = document.createElement('div');
     actionRow.className = 'row';
-    const spawn = this.button('投放测试球', () => this.cb.onSpawnBall());
-    const clear = this.button('清空测试球', () => this.cb.onClearBalls());
-    actionRow.append(spawn, clear);
+    actionRow.append(
+      this.button('投放测试球', () => this.cb.onSpawnBall()),
+      this.button('清空测试球', () => this.cb.onClearBalls()),
+    );
     root.appendChild(actionRow);
+
+    // 构图预览：隐藏测试球
+    const previewRow = document.createElement('div');
+    previewRow.className = 'row';
+    previewRow.append(this.label('构图预览'));
+    const preview = document.createElement('input');
+    preview.type = 'checkbox';
+    preview.id = 'preview-toggle';
+    preview.addEventListener('change', () => this.cb.onTogglePreviewClean(preview.checked));
+    const previewLabel = document.createElement('label');
+    previewLabel.htmlFor = 'preview-toggle';
+    previewLabel.textContent = '隐藏测试球';
+    previewRow.append(preview, previewLabel);
+    root.appendChild(previewRow);
 
     // 碰撞线框开关
     const debugRow = document.createElement('div');
@@ -93,43 +107,43 @@ export class DebugPanel {
       `FPS ${stats.fps.toFixed(0)} | 物理 ${stats.physicsMs.toFixed(2)}ms | 球 ${stats.ballCount}`;
   }
 
-  /** 显示相机实际姿态；数值来自 GameScene 对相机位置的反解。 */
-  setCameraPose(pose: CameraPose): void {
+  /** 显示相机实际姿态与投影参数，并同步按钮高亮。 */
+  setCameraState(state: CameraState): void {
+    const projection =
+      state.kind === 'ortho'
+        ? `正交 可视高${state.viewHeight}m`
+        : `透视 FOV${state.fov}°`;
     this.cameraEl.textContent =
-      `实际相机：俯视 ${pose.pitchDeg.toFixed(1)}° / 偏转 ${pose.yawDeg.toFixed(1)}°`;
-    this.highlight('pitch', Math.round(pose.pitchDeg));
-    this.highlight('yaw', Math.round(pose.yawDeg));
+      `实际：${state.modeLabel} | ${projection}\n` +
+      `俯视 ${state.pitchDeg.toFixed(1)}° / 偏转 ${state.yawDeg.toFixed(1)}° / 距 ${state.distance.toFixed(1)}m`;
+    this.highlightMode(state.modeId);
+    this.highlightPitch(Math.round(state.pitchDeg));
   }
 
-  private optionRow(
-    labelText: string,
-    axis: 'pitch' | 'yaw',
-    options: readonly number[],
-    active: number,
-    onChange: (deg: number) => void,
-  ): HTMLElement {
+  private optionRow(labelText: string, options: readonly number[]): HTMLElement {
     const row = document.createElement('div');
     row.className = 'row';
     row.append(this.label(labelText));
     for (const deg of options) {
       const btn = document.createElement('button');
       btn.textContent = `${deg}°`;
-      btn.dataset.axis = axis;
-      btn.dataset.deg = String(deg);
-      btn.addEventListener('click', () => onChange(deg));
+      btn.dataset.pitch = String(deg);
+      btn.addEventListener('click', () => this.cb.onPitchChange(deg));
       row.appendChild(btn);
     }
-    this.highlight(axis, active);
     return row;
   }
 
-  private highlight(axis: 'pitch' | 'yaw', activeDeg: number): void {
-    const root = document.getElementById('debug-panel');
-    root
-      ?.querySelectorAll<HTMLButtonElement>(`button[data-axis="${axis}"]`)
-      .forEach((btn) => {
-        btn.classList.toggle('active', Number(btn.dataset.deg) === activeDeg);
-      });
+  private highlightMode(modeId: string): void {
+    document
+      .querySelectorAll<HTMLButtonElement>('button[data-mode]')
+      .forEach((btn) => btn.classList.toggle('active', btn.dataset.mode === modeId));
+  }
+
+  private highlightPitch(activeDeg: number): void {
+    document
+      .querySelectorAll<HTMLButtonElement>('button[data-pitch]')
+      .forEach((btn) => btn.classList.toggle('active', Number(btn.dataset.pitch) === activeDeg));
   }
 
   private label(text: string): HTMLElement {

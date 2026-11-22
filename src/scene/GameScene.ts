@@ -1,23 +1,40 @@
 import * as THREE from 'three';
-import { gameConfig } from '../config/gameConfig';
-import { computeCameraPosition, derivePitchYaw, toVector3, CameraPose } from './cameraUtils';
+import {
+  gameConfig,
+  cameraModes,
+  type CameraMode,
+  type CameraModeId,
+} from '../config/gameConfig';
+import {
+  computeCameraPosition,
+  derivePitchYaw,
+  toVector3,
+  type CameraState,
+} from './cameraUtils';
 import { createGoosePlaceholder } from '../goose/GoosePlaceholder';
 
 /**
- * 3D 灰盒场景：地面、大围栏、灯光、灰盒鹅占位、固定正交相机。
+ * 3D 灰盒场景：地面、大围栏、灯光、灰盒鹅占位、投掷起点标记。
+ * 相机支持正交 / 透视两种投影对比，姿态统一为 30° 俯视 + 0° 偏转。
  * 坐标约定：Y 向上、XZ 地面、Z+ 指向玩家（01_技术方案.md §3）。
  */
 export class GameScene {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene: THREE.Scene;
-  readonly camera: THREE.OrthographicCamera;
   readonly groundMesh: THREE.Mesh;
   readonly fenceGroup: THREE.Group;
   readonly gooseGroup: THREE.Group;
+  readonly throwMarker: THREE.Group;
+
+  private readonly orthoCamera: THREE.OrthographicCamera;
+  private readonly perspCamera: THREE.PerspectiveCamera;
+  private activeCamera: THREE.Camera;
+  private activeMode: CameraMode;
 
   private currentPitchDeg: number;
-  private currentYawDeg: number;
+  private readonly currentYawDeg: number;
   private readonly lookTarget: THREE.Vector3;
+  private aspect: number;
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -28,25 +45,21 @@ export class GameScene {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color('#b8d4e8'); // 灰盒天空
 
-    // ---- 相机：固定正交，横屏 16:9 基线 ----
-    const aspect = window.innerWidth / window.innerHeight;
-    const h = gameConfig.camera.viewHeight;
-    this.camera = new THREE.OrthographicCamera(
-      (-h * aspect) / 2,
-      (h * aspect) / 2,
-      h / 2,
-      -h / 2,
-      0.1,
-      200,
-    );
+    // ---- 相机：正交与透视各一台，按模式切换 ----
+    this.aspect = window.innerWidth / window.innerHeight;
+    const orthoMode = cameraModes[0] as Extract<CameraMode, { kind: 'ortho' }>;
+    this.orthoCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200);
+    this.perspCamera = new THREE.PerspectiveCamera(25, this.aspect, 0.5, 200);
+    this.activeMode = orthoMode;
+    this.activeCamera = this.orthoCamera;
+
     this.currentPitchDeg = gameConfig.camera.pitchDeg;
     this.currentYawDeg = gameConfig.camera.yawDeg;
     this.lookTarget = toVector3(gameConfig.camera.target);
-    this.applyCameraPose();
 
     // ---- 灯光：半球光提供天空/地面色差，侧向方向光产生方向性阴影 ----
     this.scene.add(new THREE.HemisphereLight(0xdfefff, 0xc9b48c, 0.55));
-    this.scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+    this.scene.add(new THREE.AmbientLight(0xffffff, 0.32));
 
     const dir = new THREE.DirectionalLight(0xfff1da, 1.35);
     dir.position.set(-10, 16, 9); // 侧向斜光：柱子与鹅产生可辨认的投影
@@ -96,48 +109,101 @@ export class GameScene {
     }
     this.scene.add(this.gooseGroup);
 
+    // ---- 玩家投掷起点标记（栏外近端，箭头指向 -Z）----
+    this.throwMarker = this.buildThrowMarker();
+    this.scene.add(this.throwMarker);
+
+    this.applyCameraPose();
     window.addEventListener('resize', () => this.onResize());
     this.onResize();
   }
 
-  /** 切换俯视角档位（30/38/45°）。 */
+  /** 当前生效的相机（正交或透视）。 */
+  get camera(): THREE.Camera {
+    return this.activeCamera;
+  }
+
+  get modeId(): CameraModeId {
+    return this.activeMode.id;
+  }
+
+  setCameraMode(id: CameraModeId): void {
+    const mode = cameraModes.find((m) => m.id === id);
+    if (!mode) return;
+    this.activeMode = mode;
+    this.activeCamera = mode.kind === 'ortho' ? this.orthoCamera : this.perspCamera;
+    this.applyCameraPose();
+  }
+
   setCameraPitch(pitchDeg: number): void {
     this.currentPitchDeg = pitchDeg;
     this.applyCameraPose();
   }
 
-  /** 切换水平偏转角档位（0/12/18°）。 */
-  setCameraYaw(yawDeg: number): void {
-    this.currentYawDeg = yawDeg;
-    this.applyCameraPose();
-  }
-
-  /** 从相机真实位置反解的角度，供调试面板回显。 */
-  getCameraPose(): CameraPose {
-    return derivePitchYaw(
-      { x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z },
+  /** 从相机真实位置反解的角度与当前投影参数，供调试面板回显。 */
+  getCameraState(): CameraState {
+    const mode = this.activeMode;
+    const pose = derivePitchYaw(
+      {
+        x: this.activeCamera.position.x,
+        y: this.activeCamera.position.y,
+        z: this.activeCamera.position.z,
+      },
       { x: this.lookTarget.x, y: this.lookTarget.y, z: this.lookTarget.z },
     );
+    return {
+      ...pose,
+      modeId: mode.id,
+      modeLabel: mode.label,
+      kind: mode.kind,
+      viewHeight: mode.kind === 'ortho' ? mode.viewHeight : undefined,
+      fov: mode.kind === 'persp' ? mode.fov : undefined,
+    };
   }
 
   private applyCameraPose(): void {
-    const { distance, target } = gameConfig.camera;
-    const pos = computeCameraPosition(this.currentPitchDeg, this.currentYawDeg, distance, target);
-    this.camera.position.copy(toVector3(pos));
-    this.camera.lookAt(this.lookTarget);
+    const { target } = gameConfig.camera;
+    const mode = this.activeMode;
+    const pos = computeCameraPosition(
+      this.currentPitchDeg,
+      this.currentYawDeg,
+      mode.distance,
+      target,
+    );
+    const vpos = toVector3(pos);
+    if (mode.kind === 'ortho') {
+      this.orthoCamera.position.copy(vpos);
+      this.orthoCamera.lookAt(this.lookTarget);
+      this.updateOrthoFrustum(mode.viewHeight);
+      this.activeCamera = this.orthoCamera;
+    } else {
+      this.perspCamera.position.copy(vpos);
+      this.perspCamera.lookAt(this.lookTarget);
+      this.perspCamera.fov = mode.fov;
+      this.perspCamera.aspect = this.aspect;
+      this.perspCamera.updateProjectionMatrix();
+      this.activeCamera = this.perspCamera;
+    }
+  }
+
+  private updateOrthoFrustum(viewHeight: number): void {
+    this.orthoCamera.left = (-viewHeight * this.aspect) / 2;
+    this.orthoCamera.right = (viewHeight * this.aspect) / 2;
+    this.orthoCamera.top = viewHeight / 2;
+    this.orthoCamera.bottom = -viewHeight / 2;
+    this.orthoCamera.updateProjectionMatrix();
   }
 
   private onResize(): void {
-    const w = window.innerWidth;
-    const h = window.innerHeight;
-    const aspect = w / h;
-    const vh = gameConfig.camera.viewHeight;
-    this.camera.left = (-vh * aspect) / 2;
-    this.camera.right = (vh * aspect) / 2;
-    this.camera.top = vh / 2;
-    this.camera.bottom = -vh / 2;
-    this.camera.updateProjectionMatrix();
-    this.renderer.setSize(w, h);
+    this.aspect = window.innerWidth / window.innerHeight;
+    const mode = this.activeMode;
+    if (mode.kind === 'ortho') {
+      this.updateOrthoFrustum(mode.viewHeight);
+    } else {
+      this.perspCamera.aspect = this.aspect;
+      this.perspCamera.updateProjectionMatrix();
+    }
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
   }
 
   /** 围栏内 2m 网格，仅用于读距离，不横贯全屏。 */
@@ -160,6 +226,40 @@ export class GameScene {
       opacity: 0.55,
     });
     return new THREE.LineSegments(geo, mat);
+  }
+
+  /** 投掷起点：地面圆垫 + 指向栏内（-Z）的扁平箭头。 */
+  private buildThrowMarker(): THREE.Group {
+    const { x, z, padRadius } = gameConfig.throwOrigin;
+    const group = new THREE.Group();
+
+    const pad = new THREE.Mesh(
+      new THREE.CircleGeometry(padRadius, 32),
+      new THREE.MeshLambertMaterial({ color: '#7fa8c9' }),
+    );
+    pad.rotation.x = -Math.PI / 2;
+    pad.position.set(0, 0.016, 0);
+    group.add(pad);
+
+    const arrowGeo = new THREE.BufferGeometry();
+    arrowGeo.setAttribute(
+      'position',
+      new THREE.Float32BufferAttribute(
+        [0, 0, -0.9, -0.38, 0, -0.15, 0.38, 0, -0.15],
+        3,
+      ),
+    );
+    arrowGeo.setIndex([0, 1, 2]);
+    arrowGeo.computeVertexNormals();
+    const arrow = new THREE.Mesh(
+      arrowGeo,
+      new THREE.MeshLambertMaterial({ color: '#4f7fa8', side: THREE.DoubleSide }),
+    );
+    arrow.position.set(0, 0.02, 0);
+    group.add(arrow);
+
+    group.position.set(x, 0, z);
+    return group;
   }
 
   /**
@@ -224,6 +324,6 @@ export class GameScene {
   }
 
   render(): void {
-    this.renderer.render(this.scene, this.camera);
+    this.renderer.render(this.scene, this.activeCamera);
   }
 }

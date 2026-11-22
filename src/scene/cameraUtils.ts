@@ -12,6 +12,15 @@ export interface CameraPose {
   distance: number;
 }
 
+/** 调试面板回显用：相机真实姿态 + 当前投影模式。 */
+export interface CameraState extends CameraPose {
+  modeId: string;
+  modeLabel: string;
+  kind: 'ortho' | 'persp';
+  viewHeight?: number;
+  fov?: number;
+}
+
 /**
  * 由俯视角 + 水平偏转角计算正交相机位置。
  *

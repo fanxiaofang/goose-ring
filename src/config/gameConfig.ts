@@ -2,19 +2,51 @@
  * P0-0 实验参数集中配置。
  * 依据 docs/agent-plan/04_决策与参数.md：所有【待测】数值均为实验起点，不写死在逻辑里。
  */
+
+export type CameraModeId = 'ortho' | 'persp25' | 'persp35';
+
+export interface OrthoCameraMode {
+  id: CameraModeId;
+  label: string;
+  kind: 'ortho';
+  /** 相机到注视点距离（正交下只影响裁剪）。 */
+  distance: number;
+  /** 正交可视高度（米），16:9 下宽度 ≈ viewHeight × 1.778。 */
+  viewHeight: number;
+}
+
+export interface PerspectiveCameraMode {
+  id: CameraModeId;
+  label: string;
+  kind: 'persp';
+  distance: number;
+  /** 垂直 FOV（度）。 */
+  fov: number;
+}
+
+export type CameraMode = OrthoCameraMode | PerspectiveCameraMode;
+
+/**
+ * 相机对比模式（P0-0 投影实验）：
+ * 三种模式统一 30° 俯视 + 0° 偏转，只改变投影方式与距离。
+ * 透视距离按“注视点平面上可视高度 ≈ 正交 13 m”估算：
+ *   d = 13 / (2 × tan(fov/2))
+ * 同时让围栏中段宽度在三种模式下接近一致。
+ */
+export const cameraModes: CameraMode[] = [
+  { id: 'ortho', label: 'A 正交', kind: 'ortho', distance: 26, viewHeight: 13 },
+  { id: 'persp25', label: 'B 透视25°', kind: 'persp', distance: 29.1, fov: 25 },
+  { id: 'persp35', label: 'C 透视35°', kind: 'persp', distance: 20.4, fov: 35 },
+];
+
 export const gameConfig = {
   camera: {
-    /** 俯视角（相机相对水平面的仰高角，度）。GDD 2.3：【建议】38°，【待测】30/38/45。 */
-    pitchDeg: 38,
+    /** 俯视角（相机相对水平面的仰高角，度）。本轮实验统一 30°。 */
+    pitchDeg: 30,
     pitchOptionsDeg: [30, 38, 45] as number[],
-    /** 水平偏转角（相机围绕场景中心的水平观察方向，度）。0° = 正对围栏。 */
-    yawDeg: 12,
-    yawOptionsDeg: [0, 12, 18] as number[],
-    /** 相机到注视点的距离；正交投影下不影响大小，只影响裁剪与观感。 */
-    distance: 26,
-    /** 正交可视高度（米）。16:9 下宽度 ≈ viewHeight × 1.778。 */
-    viewHeight: 13,
-    /** 注视点：围栏中心略抬高，兼顾地面与鹅头。 */
+    /** 水平偏转角固定 0°：围栏前后边在屏幕上保持水平。 */
+    yawDeg: 0,
+    /** 注视点：围栏中心略抬高。 */
     target: { x: 0, y: 0.6, z: 0 },
   },
   physics: {
@@ -33,7 +65,7 @@ export const gameConfig = {
     farHeight: 1.05,
     /** 左右侧栏高。 */
     sideHeight: 1.05,
-    /** 玩家侧（Z+）栏高：压低避免遮挡内部目标与落地反馈。 */
+    /** 玩家侧（Z+）栏高：压低避免遮挡栏内目标与落地反馈。 */
     nearHeight: 0.5,
     postSpacing: 2,
     postSize: 0.14,
@@ -41,17 +73,27 @@ export const gameConfig = {
   ground: {
     sizeX: 80,
     sizeZ: 60,
-    outerColor: '#cbb894',
-    innerColor: '#e4d6b6',
+    outerColor: '#c2ad88',
+    innerColor: '#e6d8ba',
     gridColor: '#bfa980',
+  },
+  /** 玩家投掷起点标记：围栏外近端，箭头指向栏内（-Z）。 */
+  throwOrigin: {
+    x: 0,
+    z: 6.6,
+    padRadius: 0.72,
   },
   /** P0-0 灰盒鹅占位：仅用于检查立体尺度，非正式鹅模型。 */
   goose: {
     layout: [
-      { x: -4.6, z: -2.4, rotY: 0.35 },
-      { x: -1.2, z: -3.3, rotY: -0.2 },
-      { x: 2.4, z: -2.8, rotY: 0.1 },
-      { x: 5.2, z: -1.2, rotY: -0.35 },
+      { x: -5.6, z: -3.2, rotY: 0.4 },
+      { x: -2.2, z: -3.5, rotY: -0.15 },
+      { x: 1.2, z: -3.0, rotY: 0.2 },
+      { x: 4.8, z: -3.4, rotY: -0.4 },
+      { x: -4.2, z: -0.6, rotY: 0.1 },
+      { x: -0.6, z: -1.0, rotY: -0.3 },
+      { x: 2.6, z: -0.4, rotY: 0.25 },
+      { x: 6.0, z: -1.4, rotY: -0.2 },
     ],
     body: { rx: 0.42, ry: 0.28, rz: 0.3, y: 0.34 },
     neck: { radius: 0.085, height: 0.46, y: 0.68, forward: 0.1 },

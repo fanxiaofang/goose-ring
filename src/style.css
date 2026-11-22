@@ -22,7 +22,7 @@ body {
 
 /* ---- 调试面板（左上角，避开顶部信息带与底部手势热区） ---- */
 #debug-panel {
-  position: fixed;
+  position: absolute;
   top: 8px;
   left: 8px;
   z-index: 10;
@@ -78,6 +78,7 @@ body {
   font-family: Consolas, monospace;
   color: #f0c987;
   font-size: 11px;
+  white-space: pre-line;
 }
 
 #debug-panel .hint {
