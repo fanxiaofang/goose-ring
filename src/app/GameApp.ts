@@ -37,11 +37,19 @@ export class GameApp {
     this.physics = await PhysicsWorld.create(this.scene.scene);
 
     this.panel = new DebugPanel({
-      onPitchChange: (deg) => this.scene.setCameraPitch(deg),
+      onPitchChange: (deg) => {
+        this.scene.setCameraPitch(deg);
+        this.panel.setCameraPose(this.scene.getCameraPose());
+      },
+      onYawChange: (deg) => {
+        this.scene.setCameraYaw(deg);
+        this.panel.setCameraPose(this.scene.getCameraPose());
+      },
       onSpawnBall: () => this.spawnBallNearCenter(),
       onClearBalls: () => this.clearBalls(),
       onToggleDebugLines: (visible) => this.physics.setDebugVisible(visible),
     });
+    this.panel.setCameraPose(this.scene.getCameraPose());
 
     // 鼠标 / 触摸统一走 Pointer Events（AGENTS.md §9：触摸和鼠标同逻辑）
     canvas.addEventListener('pointerdown', (e) => {

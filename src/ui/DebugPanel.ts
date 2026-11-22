@@ -1,7 +1,9 @@
 import { gameConfig } from '../config/gameConfig';
+import type { CameraPose } from '../scene/cameraUtils';
 
 export interface DebugPanelCallbacks {
   onPitchChange: (deg: number) => void;
+  onYawChange: (deg: number) => void;
   onSpawnBall: () => void;
   onClearBalls: () => void;
   onToggleDebugLines: (visible: boolean) => void;
@@ -16,6 +18,7 @@ export interface FrameStats {
 /** 简易 DOM 调试面板（正式 UI 后续会替换；P0-0 只用于观察与验证）。 */
 export class DebugPanel {
   private statsEl: HTMLElement;
+  private cameraEl: HTMLElement;
 
   constructor(private cb: DebugPanelCallbacks) {
     const root = document.getElementById('debug-panel');
@@ -28,21 +31,29 @@ export class DebugPanel {
     root.appendChild(title);
 
     // 相机俯视角三档
-    const camRow = document.createElement('div');
-    camRow.className = 'row';
-    camRow.append(this.label('俯视角'));
-    for (const deg of gameConfig.camera.pitchOptionsDeg) {
-      const btn = document.createElement('button');
-      btn.textContent = `${deg}°`;
-      btn.dataset.deg = String(deg);
-      btn.addEventListener('click', () => {
-        this.highlightPitch(deg);
-        this.cb.onPitchChange(deg);
-      });
-      camRow.appendChild(btn);
-    }
-    root.appendChild(camRow);
-    this.highlightPitch(gameConfig.camera.pitchDeg);
+    const pitchRow = this.optionRow(
+      '俯视角',
+      'pitch',
+      gameConfig.camera.pitchOptionsDeg,
+      gameConfig.camera.pitchDeg,
+      (deg) => this.cb.onPitchChange(deg),
+    );
+    root.appendChild(pitchRow);
+
+    // 相机水平偏转角三档
+    const yawRow = this.optionRow(
+      '水平偏转',
+      'yaw',
+      gameConfig.camera.yawOptionsDeg,
+      gameConfig.camera.yawDeg,
+      (deg) => this.cb.onYawChange(deg),
+    );
+    root.appendChild(yawRow);
+
+    // 相机真实姿态回显（由相机位置反解，不是按钮状态的复制）
+    this.cameraEl = document.createElement('div');
+    this.cameraEl.className = 'camera-info';
+    root.appendChild(this.cameraEl);
 
     // 投球 / 清空
     const actionRow = document.createElement('div');
@@ -82,11 +93,43 @@ export class DebugPanel {
       `FPS ${stats.fps.toFixed(0)} | 物理 ${stats.physicsMs.toFixed(2)}ms | 球 ${stats.ballCount}`;
   }
 
-  private highlightPitch(activeDeg: number): void {
+  /** 显示相机实际姿态；数值来自 GameScene 对相机位置的反解。 */
+  setCameraPose(pose: CameraPose): void {
+    this.cameraEl.textContent =
+      `实际相机：俯视 ${pose.pitchDeg.toFixed(1)}° / 偏转 ${pose.yawDeg.toFixed(1)}°`;
+    this.highlight('pitch', Math.round(pose.pitchDeg));
+    this.highlight('yaw', Math.round(pose.yawDeg));
+  }
+
+  private optionRow(
+    labelText: string,
+    axis: 'pitch' | 'yaw',
+    options: readonly number[],
+    active: number,
+    onChange: (deg: number) => void,
+  ): HTMLElement {
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.append(this.label(labelText));
+    for (const deg of options) {
+      const btn = document.createElement('button');
+      btn.textContent = `${deg}°`;
+      btn.dataset.axis = axis;
+      btn.dataset.deg = String(deg);
+      btn.addEventListener('click', () => onChange(deg));
+      row.appendChild(btn);
+    }
+    this.highlight(axis, active);
+    return row;
+  }
+
+  private highlight(axis: 'pitch' | 'yaw', activeDeg: number): void {
     const root = document.getElementById('debug-panel');
-    root?.querySelectorAll<HTMLButtonElement>('button[data-deg]').forEach((btn) => {
-      btn.classList.toggle('active', Number(btn.dataset.deg) === activeDeg);
-    });
+    root
+      ?.querySelectorAll<HTMLButtonElement>(`button[data-axis="${axis}"]`)
+      .forEach((btn) => {
+        btn.classList.toggle('active', Number(btn.dataset.deg) === activeDeg);
+      });
   }
 
   private label(text: string): HTMLElement {

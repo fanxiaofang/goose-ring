@@ -3,8 +3,8 @@ import * as THREE from 'three';
 import { gameConfig } from '../config/gameConfig';
 
 /**
- * Rapier 物理世界封装：静态地面/围栏 Collider、测试球投放、固定步进、碰撞线框调试。
- * 约束（AGENTS.md）：单份物理状态源；围栏每段边界覆盖真实可见尺寸，圈/球不能穿栏。
+ * Rapier 物理世界封装：静态地面/围栏/灰盒鹅 Collider、测试球投放、固定步进、碰撞线框调试。
+ * 约束（AGENTS.md）：单份物理状态源；围栏每段边界覆盖真实可见尺寸，球/圈不能穿栏。
  */
 export class PhysicsWorld {
   readonly world: RAPIER.World;
@@ -35,10 +35,11 @@ export class PhysicsWorld {
 
     const pw = new PhysicsWorld(world, debugLines);
     pw.buildStaticColliders();
+    pw.buildGooseColliders();
     return pw;
   }
 
-  /** 地面 + 四面围栏墙，尺寸与 GameScene 的视觉围栏完全一致。 */
+  /** 地面 + 四面围栏墙；各侧高度与 GameScene 的视觉栏杆一一对应。 */
   private buildStaticColliders(): void {
     const { ground, fence } = gameConfig;
     const staticBody = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
@@ -49,24 +50,60 @@ export class PhysicsWorld {
       staticBody,
     );
 
-    // 围栏四面薄墙：真实高度 fence.height，不留在缝隙
+    // 围栏四面薄墙：每侧高度 = 视觉栏杆高度，不留下可穿过的缝隙
     const t = 0.08; // 墙厚
-    const hx = fence.width / 2 + t;
-    const hz = fence.depth / 2 + t;
+    const { width, depth, farHeight, sideHeight, nearHeight } = fence;
     const walls: Array<[number, number, number, number, number]> = [
       // [halfX, halfY, halfZ, x, z]
-      [hx, fence.height / 2, t, 0, -fence.depth / 2], // 后墙（远处）
-      [hx, fence.height / 2, t, 0, fence.depth / 2], // 前墙（玩家侧）
-      [t, fence.height / 2, hz, -fence.width / 2, 0], // 左墙
-      [t, fence.height / 2, hz, fence.width / 2, 0], // 右墙
+      [width / 2 + t, farHeight / 2, t, 0, -depth / 2], // 远侧
+      [width / 2 + t, nearHeight / 2, t, 0, depth / 2], // 玩家侧（低栏）
+      [t, sideHeight / 2, depth / 2 + t, -width / 2, 0], // 左侧
+      [t, sideHeight / 2, depth / 2 + t, width / 2, 0], // 右侧
     ];
-    for (const [hxw, hy, hzw, x, z] of walls) {
+    const heights = [farHeight, nearHeight, sideHeight, sideHeight];
+    walls.forEach(([hx, hy, hz, x, z], i) => {
       this.world.createCollider(
-        RAPIER.ColliderDesc.cuboid(hxw, hy, hzw)
-          .setTranslation(x, fence.height / 2, z)
+        RAPIER.ColliderDesc.cuboid(hx, hy, hz)
+          .setTranslation(x, heights[i] / 2, z)
           .setFriction(0.8)
           .setRestitution(0.3),
         staticBody,
+      );
+    });
+  }
+
+  /** 灰盒鹅静态碰撞体：身体球 + 颈胶囊 + 头球，与视觉占位体使用同一份配置。 */
+  private buildGooseColliders(): void {
+    const { layout, body, neck, head, collider } = gameConfig.goose;
+    for (const entry of layout) {
+      const half = entry.rotY / 2;
+      const gooseBody = this.world.createRigidBody(
+        RAPIER.RigidBodyDesc.fixed()
+          .setTranslation(entry.x, 0, entry.z)
+          .setRotation({ x: 0, y: Math.sin(half), z: 0, w: Math.cos(half) }),
+      );
+      // 身体（近似球）
+      this.world.createCollider(
+        RAPIER.ColliderDesc.ball(collider.bodyRadius).setTranslation(0, body.y, 0),
+        gooseBody,
+      );
+      // 颈（竖直胶囊）
+      this.world.createCollider(
+        RAPIER.ColliderDesc.capsule(collider.neckHalfHeight, collider.neckRadius).setTranslation(
+          0,
+          neck.y,
+          neck.forward,
+        ),
+        gooseBody,
+      );
+      // 头（球）
+      this.world.createCollider(
+        RAPIER.ColliderDesc.ball(collider.headRadius).setTranslation(
+          0,
+          head.y,
+          head.forward,
+        ),
+        gooseBody,
       );
     }
   }
