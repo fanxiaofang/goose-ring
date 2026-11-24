@@ -23,4 +23,4 @@ export const PRESET_SPEED_FACTOR: Record<ThrowPreset, number> = {
 };
 
 /** 撞围栏预设使用较低的仰角，确保撞到栏板而不是提前落地。 */
-export const FENCE_PRESET_ELEVATION_DEG = 10;
+export const FENCE_PRESET_ELEVATION_DEG = 5;

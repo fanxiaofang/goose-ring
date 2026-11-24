@@ -112,7 +112,6 @@ export class RingSystem {
     // 环平面与 Collider 一致：TorusGeometry 默认位于局部 XY 平面，法线为局部 Z。
     const torusGeo = new THREE.TorusGeometry(t.radius, t.tubeRadius, 10, 40);
     const mesh = new THREE.Mesh(torusGeo, this.ringMat);
-    mesh.castShadow = true;
 
     const beadGeo = new THREE.SphereGeometry(t.tubeRadius * 1.35, 8, 6);
     const bead = new THREE.Mesh(beadGeo, this.beadMat);

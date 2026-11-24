@@ -1,191 +1,184 @@
 import * as THREE from 'three';
 import { gameConfig } from '../config/gameConfig';
-import type { Vec3Like } from '../goose/GoosePlaceholder';
+import { aimLateralOffset, sampleThrowArc, speedFromCharge, velocityWithYaw } from './throwMath';
+
+/** 每帧传入的输入态势：蓄力、瞄准、当前参数与辅助开关。 */
+export interface RingPreviewState {
+  charging: boolean;
+  /** 0~1 蓄力值。 */
+  charge: number;
+  /** 当前偏转（弧度，正为 +X）。 */
+  aimRad: number;
+  maxAimRad: number;
+  /** 满蓄力对应的出手速度（与真实投掷共用 tuning.speed）。 */
+  maxSpeed: number;
+  elevationDeg: number;
+  /** 轨迹辅助开关：正式模式可关闭，只保留手持圈与力度反馈。 */
+  assist: boolean;
+}
 
 /**
- * 套圈飞行预览（P0-0 构图验证工具）。
+ * 套圈出手预览（纯视觉，不参与物理与命中判定）。
  *
- * 仅做视觉演示：一条抛物线轨迹 + 一个圈 + 地面投影 + 目标脖子标记。
- * 不创建物理刚体、不参与命中判定、不影响正式玩法数据。
+ * 三段式表现：
+ * 1. 手中的悬浮套圈（常驻，蓄力时前倾、瞄准时侧倾）；
+ * 2. 橙色高对比轨迹点（18 个，InstancedMesh）；
+ * 3. 地面预测落点环。
+ *
+ * 弹道与真实投掷共用 velocityWithYaw + 重力 + 线阻尼，
+ * 因此预览点与 Rapier 实际路径在整段飞行内基本重合。
  */
 export class RingPreview {
   private readonly root = new THREE.Group();
-  private readonly ring: THREE.Mesh;
-  private readonly ringMat: THREE.MeshBasicMaterial;
-  private readonly shadow: THREE.Mesh;
-  private readonly shadowMat: THREE.MeshBasicMaterial;
-  private readonly neckMarker: THREE.Mesh;
-  private readonly neckMarkerMat: THREE.MeshBasicMaterial;
-  private readonly line: THREE.Line;
-  private readonly lineMat: THREE.LineDashedMaterial;
-
-  private readonly p0 = new THREE.Vector3();
-  private readonly p1 = new THREE.Vector3();
-  private readonly p2 = new THREE.Vector3();
-
+  private readonly hand = new THREE.Group();
+  private readonly dots: THREE.InstancedMesh;
+  private readonly landing: THREE.Mesh;
+  private readonly launchMark: THREE.Mesh;
+  private readonly landingMat: THREE.MeshBasicMaterial;
+  private readonly origin = new THREE.Vector3(
+    gameConfig.throwOrigin.x,
+    gameConfig.throwOrigin.y,
+    gameConfig.throwOrigin.z,
+  );
+  private readonly dummy = new THREE.Object3D();
+  private hoverPhase = 0;
   private elapsed = 0;
-  private active = false;
-  private loop = false;
-  private fadeK = 1;
+  /** 最近一次采样的落点，供调试读取。 */
+  private landingPoint = new THREE.Vector3();
 
   constructor(scene: THREE.Scene) {
-    const { ringRadius, tubeRadius } = gameConfig.ringPreview;
+    const cfg = gameConfig.ringPreview;
 
-    this.ringMat = new THREE.MeshBasicMaterial({
-      color: '#ffd23f',
-      transparent: true,
-      opacity: 1,
-    });
-    this.ring = new THREE.Mesh(
-      new THREE.TorusGeometry(ringRadius, tubeRadius, 10, 36),
-      this.ringMat,
+    // ---- 1. 手中的悬浮套圈 ----
+    const handRing = new THREE.Mesh(
+      new THREE.TorusGeometry(cfg.ringRadius, cfg.tubeRadius, 10, 40),
+      new THREE.MeshLambertMaterial({ color: '#e0a83c' }),
     );
-    this.ring.rotation.x = Math.PI / 2;
-    this.root.add(this.ring);
+    handRing.rotation.x = Math.PI / 2; // 默认在 XY 平面，转为水平（XZ）
+    this.hand.add(handRing);
+    this.hand.position.copy(this.origin);
+    this.root.add(this.hand);
 
-    this.shadowMat = new THREE.MeshBasicMaterial({
-      color: '#000000',
+    // 站位垫上的橙色站位标记，和手持圈一起横移。
+    this.launchMark = new THREE.Mesh(
+      new THREE.RingGeometry(cfg.ringRadius - cfg.tubeRadius, cfg.ringRadius + cfg.tubeRadius, 40),
+      new THREE.MeshBasicMaterial({ color: '#db703b', transparent: true, opacity: 0.42, depthWrite: false }),
+    );
+    this.launchMark.rotation.x = -Math.PI / 2;
+    this.launchMark.position.set(this.origin.x, 0.007, this.origin.z);
+    this.root.add(this.launchMark);
+
+    // ---- 2. 轨迹点（实例化球体）----
+    const dotGeo = new THREE.SphereGeometry(cfg.dotRadius, 8, 6);
+    const dotMat = new THREE.MeshBasicMaterial({
+      color: cfg.dotColor,
       transparent: true,
-      opacity: 0.25,
+      opacity: 0.95,
       depthWrite: false,
     });
-    this.shadow = new THREE.Mesh(new THREE.CircleGeometry(ringRadius * 0.55, 24), this.shadowMat);
-    this.shadow.rotation.x = -Math.PI / 2;
-    this.root.add(this.shadow);
+    this.dots = new THREE.InstancedMesh(dotGeo, dotMat, cfg.dotCount);
+    this.dots.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.dots.visible = false;
+    this.dots.frustumCulled = false;
+    this.root.add(this.dots);
 
-    this.neckMarkerMat = new THREE.MeshBasicMaterial({
-      color: '#35d6e8',
+    // ---- 3. 地面预测落点环 ----
+    this.landingMat = new THREE.MeshBasicMaterial({
+      color: cfg.landingRingColor,
       transparent: true,
-      opacity: 0.9,
+      opacity: 0.85,
       depthWrite: false,
+      side: THREE.DoubleSide,
     });
-    this.neckMarker = new THREE.Mesh(
-      new THREE.TorusGeometry(ringRadius * 0.46, 0.022, 8, 28),
-      this.neckMarkerMat,
+    this.landing = new THREE.Mesh(
+      new THREE.RingGeometry(cfg.landingRingInner, cfg.landingRingOuter, 40),
+      this.landingMat,
     );
-    this.neckMarker.rotation.x = Math.PI / 2;
-    this.root.add(this.neckMarker);
+    this.landing.rotation.x = -Math.PI / 2;
+    this.landing.position.set(this.origin.x, 0.02, this.origin.z);
+    this.landing.visible = false;
+    this.root.add(this.landing);
 
-    this.lineMat = new THREE.LineDashedMaterial({
-      color: '#ffd23f',
-      dashSize: 0.18,
-      gapSize: 0.13,
-      transparent: true,
-      opacity: 0.75,
-    });
-    this.line = new THREE.Line(new THREE.BufferGeometry(), this.lineMat);
-    this.root.add(this.line);
-
-    this.root.visible = false;
     scene.add(this.root);
   }
 
-  /** 从投掷起点飞向鹅脖位置；loop 用于截图时循环演示。 */
-  start(from: Vec3Like, target: Vec3Like, loop = false): void {
-    this.p0.set(from.x, from.y, from.z);
-    this.p2.set(target.x, target.y, target.z);
-    this.p1.set(
-      (this.p0.x + this.p2.x) / 2,
-      (this.p0.y + this.p2.y) / 2 + gameConfig.ringPreview.arcLift,
-      (this.p0.z + this.p2.z) / 2,
+  /** 每帧由 GameApp 传入真实帧间隔与输入态势。 */
+  update(dt: number, state: RingPreviewState): void {
+    this.elapsed += dt;
+    this.hoverPhase += dt * gameConfig.ringPreview.hoverSpeed;
+
+    const charge = clamp01(state.charge);
+    const aimRatio = state.maxAimRad > 1e-6 ? clamp11(state.aimRad / state.maxAimRad) : 0;
+    // 瞄准时手持圈跟着左右滑移，扩大近场覆盖（参考仓库的 launchX 做法）。
+    const lateral = aimLateralOffset(
+      state.aimRad,
+      state.maxAimRad,
+      gameConfig.input.aimLateralMax,
     );
 
-    this.neckMarker.position.set(this.p2.x, this.p2.y, this.p2.z);
-    this.buildTrajectoryLine();
+    // 手持圈：常驻悬浮；蓄力前倾、瞄准侧倾，并随瞄准横移。
+    this.hand.position.x = this.origin.x + lateral;
+    this.launchMark.position.x = this.hand.position.x;
+    this.hand.position.y =
+      this.origin.y +
+      Math.sin(this.hoverPhase) * gameConfig.ringPreview.hoverAmplitude;
+    this.hand.rotation.x = gameConfig.ringPreview.chargeTiltX * charge;
+    this.hand.rotation.z = gameConfig.ringPreview.aimTiltZ * aimRatio;
 
-    this.elapsed = 0;
-    this.loop = loop;
-    this.active = true;
-    this.root.visible = true;
-    this.setOpacity(1);
-    this.placeAtPath(0);
-  }
-
-  /**
-   * 截图/人工核对用：直接停在落点保持阶段，不再推进动画。
-   * 仅视觉冻结，不生成刚体、不影响物理与判定。
-   */
-  freezeAtTarget(): void {
-    this.placeAtPath(1);
-    this.setOpacity(1);
-    this.neckMarkerMat.opacity = 0.9;
-    this.active = false;
-    this.root.visible = true;
-  }
-
-  /** 每帧由 GameApp 传入帧间隔（视觉动画，不进入物理步）。 */
-  update(dt: number): void {
-    if (!this.active) return;
-    const { durationSec, holdSec, fadeSec } = gameConfig.ringPreview;
-    this.elapsed += dt;
-
-    if (this.elapsed < durationSec) {
-      const t = this.elapsed / durationSec;
-      this.placeAtPath(t);
-      this.setOpacity(1);
-      this.neckMarkerMat.opacity = 0.55 + 0.35 * t;
+    const showArc = state.charging && state.assist;
+    this.dots.visible = showArc;
+    this.landing.visible = showArc;
+    if (!showArc) {
+      this.landingPoint.set(this.origin.x, this.origin.y, this.origin.z);
       return;
     }
 
-    if (this.elapsed < durationSec + holdSec) {
-      this.placeAtPath(1);
-      this.ring.rotation.x = Math.PI / 2 + Math.sin(this.elapsed * 5) * 0.12;
-      this.setOpacity(1);
-      return;
-    }
+    // 与真实投掷同源的初速度 + 解析落点采样（出手点同样带横移）。
+    const launchOrigin = {
+      x: this.origin.x + lateral,
+      y: this.origin.y,
+      z: this.origin.z,
+    };
+    const speed = speedFromCharge(
+      state.maxSpeed,
+      charge,
+      gameConfig.input.minSpeedFactor,
+    );
+    const linvel = velocityWithYaw(speed, state.elevationDeg, state.aimRad);
+    const gravity = Math.abs(gameConfig.physics.gravityY);
+    const points = sampleThrowArc(
+      launchOrigin,
+      linvel,
+      gravity,
+      gameConfig.ringPreview.dotCount,
+      gameConfig.ring.linearDamping,
+    );
 
-    if (this.elapsed < durationSec + holdSec + fadeSec) {
-      const k = (this.elapsed - durationSec - holdSec) / fadeSec;
-      this.placeAtPath(1);
-      this.setOpacity(1 - k);
-      return;
+    for (let i = 0; i < points.length; i++) {
+      const p = points[i];
+      this.dummy.position.set(p.x, p.y, p.z);
+      this.dummy.updateMatrix();
+      this.dots.setMatrixAt(i, this.dummy.matrix);
     }
+    this.dots.instanceMatrix.needsUpdate = true;
 
-    if (this.loop) {
-      this.start(this.p0, this.p2, true);
-      return;
-    }
-    this.active = false;
-    this.root.visible = false;
+    const last = points[points.length - 1];
+    this.landingPoint.set(last.x, 0, last.z);
+    this.landing.position.set(last.x, 0.02, last.z);
+    const pulse = 1 + Math.sin(this.elapsed * 6) * 0.04;
+    this.landing.scale.set(pulse, pulse, 1);
   }
 
-  private placeAtPath(t: number): void {
-    const it = 1 - t;
-    const x = it * it * this.p0.x + 2 * it * t * this.p1.x + t * t * this.p2.x;
-    const y = it * it * this.p0.y + 2 * it * t * this.p1.y + t * t * this.p2.y;
-    const z = it * it * this.p0.z + 2 * it * t * this.p1.z + t * t * this.p2.z;
-    this.ring.position.set(x, y, z);
-    this.ring.rotation.x = Math.PI / 2 + Math.sin(this.elapsed * 7) * 0.18;
-    this.shadow.position.set(x, 0.025, z);
-    const h = Math.max(0, Math.min(1, y / 4));
-    this.shadowMat.opacity = 0.3 * (1 - h * 0.6) * this.fadeK;
-    const s = 1 + h * 0.5;
-    this.shadow.scale.set(s, s, s);
+  /** 最近一次采样落点（x, 0, z），仅调试读取。 */
+  getLandingPoint(): THREE.Vector3 {
+    return this.landingPoint;
   }
+}
 
-  private buildTrajectoryLine(): void {
-    const segments = 28;
-    const positions = new Float32Array((segments + 1) * 3);
-    for (let i = 0; i <= segments; i++) {
-      const t = i / segments;
-      const it = 1 - t;
-      positions[i * 3] = it * it * this.p0.x + 2 * it * t * this.p1.x + t * t * this.p2.x;
-      positions[i * 3 + 1] =
-        it * it * this.p0.y + 2 * it * t * this.p1.y + t * t * this.p2.y;
-      positions[i * 3 + 2] =
-        it * it * this.p0.z + 2 * it * t * this.p1.z + t * t * this.p2.z;
-    }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    this.line.geometry.dispose();
-    this.line.geometry = geo;
-    this.line.computeLineDistances();
-  }
+function clamp01(v: number): number {
+  return Math.max(0, Math.min(1, v));
+}
 
-  private setOpacity(k: number): void {
-    this.fadeK = Math.max(0, k);
-    this.ringMat.opacity = Math.max(0, k);
-    this.neckMarkerMat.opacity = Math.max(0, 0.9 * k);
-    this.lineMat.opacity = Math.max(0, 0.75 * k);
-  }
+function clamp11(v: number): number {
+  return Math.max(-1, Math.min(1, v));
 }

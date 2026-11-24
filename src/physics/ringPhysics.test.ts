@@ -1,10 +1,13 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import RAPIER from '@dimforge/rapier3d-compat';
+import * as THREE from 'three';
 import { gameConfig } from '../config/gameConfig';
+import { getGooseNeckWorldPosition } from '../goose/GoosePlaceholder';
 import { createRingRigidBody } from '../ring/ringBody';
-import { horizontalRingRotation } from '../ring/ringGeometry';
-import type { Vec3Like } from '../ring/throwMath';
+import { horizontalRingRotation, ringInnerRadius } from '../ring/ringGeometry';
+import { aimLateralOffset, speedFromCharge, velocityWithYaw, type Vec3Like } from '../ring/throwMath';
 import { FixedStepAccumulator } from './fixedStep';
+import { PhysicsWorld } from './PhysicsWorld';
 
 /**
  * 套圈物理集成测试（Rapier WASM，与运行时共用 createRingRigidBody）。
@@ -95,6 +98,57 @@ describe('套圈真实内孔', () => {
     expect(ring.radius - ring.tubeRadius).toBeGreaterThan(gameConfig.goose.collider.headRadius);
     expect(ring.radius - ring.tubeRadius).toBeGreaterThan(gameConfig.goose.collider.neckRadius);
   });
+});
+
+it('调高鹅头颈后，最近一只鹅仍有多个可从头上穿入的手动投掷输入', async () => {
+  const { goose, input, throwOrigin } = gameConfig;
+  const nearest = goose.layout.reduce((front, entry) => entry.z > front.z ? entry : front);
+  const neck = getGooseNeckWorldPosition(nearest);
+  const head = new THREE.Vector3(
+    nearest.x + Math.sin(nearest.rotY) * goose.head.forward,
+    goose.head.y,
+    nearest.z + Math.cos(nearest.rotY) * goose.head.forward,
+  );
+  const physics = await PhysicsWorld.create(new THREE.Scene());
+  const xzAim = THREE.MathUtils.degToRad(-29.2);
+  const lateral = aimLateralOffset(xzAim, THREE.MathUtils.degToRad(input.maxAimDeg), input.aimLateralMax);
+  const origin = { ...throwOrigin, x: throwOrigin.x + lateral };
+  const headClearance = ringInnerRadius(ring.radius, ring.tubeRadius) - goose.collider.headRadius;
+  let successfulCharges = 0;
+
+  try {
+    for (const charge of [0.27, 0.28, 0.285, 0.295, 0.30, 0.305]) {
+      const speed = speedFromCharge(ring.speed, charge, input.minSpeedFactor);
+      const body = spawnRing(
+        physics.world, origin, velocityWithYaw(speed, ring.elevationDeg, xzAim),
+        { x: 0, y: ring.spin, z: 0 },
+      );
+      const localHead = new THREE.Vector3();
+      const inverseRotation = new THREE.Quaternion();
+      const previous = new THREE.Vector3();
+      let passedHead = false;
+      for (let frame = 0; frame < 90; frame++) {
+        const pos = body.translation();
+        const rot = body.rotation();
+        localHead.copy(head).sub(pos).applyQuaternion(inverseRotation.copy(rot).invert());
+        if (frame > 0 && previous.z < 0 && localHead.z >= 0 && body.linvel().y < 0) {
+          previous.lerp(localHead, -previous.z / (localHead.z - previous.z));
+          passedHead ||= Math.hypot(previous.x, previous.y) < headClearance;
+        }
+        previous.copy(localHead);
+        physics.step();
+      }
+      const end = body.translation();
+      if (passedHead && end.y > goose.body.y + goose.body.ry / 2 && end.y < neck.y
+          && Math.hypot(end.x - neck.x, end.z - neck.z) < 0.3) {
+        successfulCharges++;
+      }
+      physics.world.removeRigidBody(body);
+    }
+  } finally {
+    physics.world.free();
+  }
+  expect(successfulCharges).toBeGreaterThanOrEqual(2);
 });
 
 describe('套圈地面碰撞与稳定', () => {

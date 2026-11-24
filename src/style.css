@@ -20,11 +20,91 @@ body {
   touch-action: none; /* 触摸事件不被浏览器手势拦截 */
 }
 
-/* ---- 调试面板（左上角，避开顶部信息带与底部手势热区） ---- */
+#throw-hud {
+  position: fixed;
+  inset: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))
+    auto max(12px, env(safe-area-inset-left));
+  z-index: 12;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 6px 10px;
+  flex-wrap: wrap;
+  color: #faf7ef;
+  pointer-events: none;
+}
+
+#throw-hud[hidden],
+#debug-panel[hidden] {
+  display: none;
+}
+
+.throw-hud-stats,
+.throw-hud-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.throw-hud-stats {
+  box-sizing: border-box;
+  min-height: 44px;
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: rgb(29 27 21 / 92%);
+  font-size: clamp(11px, 1.8vw, 14px);
+}
+
+.throw-hud-stats div {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.throw-hud-stats dd {
+  margin: 0;
+  color: #f5b454;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.throw-hud-actions {
+  gap: 5px;
+  margin-inline-start: auto;
+  pointer-events: auto;
+}
+
+.throw-hud-actions button {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 10px;
+  color: inherit;
+  background: rgb(29 27 21 / 92%);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.throw-hud-actions button:hover,
+.throw-hud-actions button[aria-expanded='true'] {
+  background: #4d3924;
+}
+
+#sound-toggle[aria-pressed='false'] {
+  color: #d3c8b7;
+  text-decoration: line-through;
+}
+
+/* ---- 顶栏下方的调试抽屉 ---- */
 #debug-panel {
-  position: absolute;
-  top: 8px;
-  left: 8px;
+  position: fixed;
+  top: calc(max(8px, env(safe-area-inset-top)) + 50px);
+  right: max(12px, env(safe-area-inset-right));
   z-index: 10;
   padding: 8px 10px;
   background: rgba(20, 24, 30, 0.72);
@@ -34,7 +114,7 @@ body {
   line-height: 1.6;
   pointer-events: auto;
   max-width: 360px;
-  max-height: calc(100vh - 16px);
+  max-height: calc(100dvh - max(8px, env(safe-area-inset-top)) - 58px - env(safe-area-inset-bottom));
   overflow-y: auto;
   box-sizing: border-box;
 }

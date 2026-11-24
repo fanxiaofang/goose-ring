@@ -11,8 +11,8 @@ export interface DebugPanelCallbacks {
   onToggleDebugLines: (visible: boolean) => void;
   /** 构图预览：隐藏红色测试球，避免干扰三种相机模式的对比截图。 */
   onTogglePreviewClean: (clean: boolean) => void;
-  /** 套圈飞行预览（纯视觉）：预览近处/远处鹅。 */
-  onPreviewRing: (depth: 'near' | 'far') => void;
+  /** 轨迹辅助开关：新手练习显示完整轨迹与落点，正式模式可关闭。 */
+  onToggleAssist: (enabled: boolean) => void;
   /** 显示/隐藏正式 UI 安全区参考带。 */
   onToggleUiSafeGuide: (visible: boolean) => void;
   /** P0-1 固定投掷预设（可重复实验）。 */
@@ -133,15 +133,6 @@ export class DebugPanel {
     );
     root.appendChild(actionRow);
 
-    const previewRingRow = document.createElement('div');
-    previewRingRow.className = 'row';
-    previewRingRow.append(this.label('套圈预览'));
-    previewRingRow.append(
-      this.button('近处鹅', () => this.cb.onPreviewRing('near')),
-      this.button('远处鹅', () => this.cb.onPreviewRing('far')),
-    );
-    root.appendChild(previewRingRow);
-
     const previewRow = document.createElement('div');
     previewRow.className = 'row';
     previewRow.append(this.label('构图预览'));
@@ -169,6 +160,21 @@ export class DebugPanel {
     debugRow.append(wire, wireLabel);
     root.appendChild(debugRow);
 
+    // 轨迹辅助开关（默认开启；正式模式可关闭）
+    const assistRow = document.createElement('div');
+    assistRow.className = 'row';
+    assistRow.append(this.label('轨迹辅助'));
+    const assist = document.createElement('input');
+    assist.type = 'checkbox';
+    assist.id = 'assist-toggle';
+    assist.checked = gameConfig.ringPreview.assistDefault;
+    assist.addEventListener('change', () => this.cb.onToggleAssist(assist.checked));
+    const assistLabel = document.createElement('label');
+    assistLabel.htmlFor = 'assist-toggle';
+    assistLabel.textContent = '轨迹点 + 落点环';
+    assistRow.append(assist, assistLabel);
+    root.appendChild(assistRow);
+
     // UI 安全区参考带
     const safeRow = document.createElement('div');
     safeRow.className = 'row';
@@ -190,7 +196,7 @@ export class DebugPanel {
 
     this.hintEl = document.createElement('div');
     this.hintEl.className = 'hint';
-    this.setDragPower(null);
+    this.setCharge(null);
     root.appendChild(this.hintEl);
   }
 
@@ -201,12 +207,22 @@ export class DebugPanel {
       `${stats.pixelWidth}×${stats.pixelHeight} @DPR${stats.dpr.toFixed(2)} | 阴影 ${stats.shadowMapSize}`;
   }
 
-  /** 拖拽蓄力时显示力度；传 null 恢复默认提示。 */
-  setDragPower(power: number | null): void {
+  /** 蓄力中显示力度与偏转；传 null 恢复默认提示。 */
+  setCharge(charge: number | null, aimRad = 0): void {
+    if (charge === null) {
+      this.hintEl.textContent = '按住蓄力（越久越远）· 左右拖动瞄准 · 松手投圈';
+      return;
+    }
+    const aimDeg = (aimRad * 180) / Math.PI;
+    const sign = aimDeg > 0.5 ? '+' : '';
     this.hintEl.textContent =
-      power === null
-        ? '画布按住拖动蓄力，松手投圈（拖得越远力度越大）'
-        : `蓄力中：力度 ${Math.round(power * 100)}%`;
+      `蓄力 ${Math.round(charge * 100)}% · 偏转 ${sign}${aimDeg.toFixed(0)}°（松手投圈）`;
+  }
+
+  /** 同步轨迹辅助开关状态（URL 参数可能覆盖默认值）。 */
+  setAssist(enabled: boolean): void {
+    const el = document.getElementById('assist-toggle') as HTMLInputElement | null;
+    if (el) el.checked = enabled;
   }
 
   /** 显示相机实际姿态与投影参数，并同步按钮高亮。 */
