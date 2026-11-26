@@ -13,7 +13,7 @@ export interface DebugPanelCallbacks {
   onTogglePreviewClean: (clean: boolean) => void;
   /** 轨迹辅助开关：新手练习显示完整轨迹与落点，正式模式可关闭。 */
   onToggleAssist: (enabled: boolean) => void;
-  /** 显示/隐藏正式 UI 安全区参考带。 */
+  /** 显示/隐藏布局和投影测量层。 */
   onToggleUiSafeGuide: (visible: boolean) => void;
   /** P0-1 固定投掷预设（可重复实验）。 */
   onThrowPreset: (preset: ThrowPreset) => void;
@@ -30,6 +30,7 @@ export interface FrameStats {
   ballCount: number;
   /** 场上真实物理套圈数量。 */
   ringCount: number;
+  throwCount: number;
   /** 当前渲染缓冲尺寸（不是 CSS 尺寸）。 */
   pixelWidth: number;
   pixelHeight: number;
@@ -175,10 +176,10 @@ export class DebugPanel {
     assistRow.append(assist, assistLabel);
     root.appendChild(assistRow);
 
-    // UI 安全区参考带
+    // 布局和投影测量层
     const safeRow = document.createElement('div');
     safeRow.className = 'row';
-    safeRow.append(this.label('UI 安全区'));
+    safeRow.append(this.label('布局测量'));
     const safe = document.createElement('input');
     safe.type = 'checkbox';
     safe.id = 'safe-toggle';
@@ -202,7 +203,7 @@ export class DebugPanel {
 
   updateStats(stats: FrameStats): void {
     this.statsEl.textContent =
-      `FPS ${stats.fps.toFixed(0)} | 物理 ${stats.physicsMs.toFixed(2)}ms | 圈 ${stats.ringCount} | 球 ${stats.ballCount}\n` +
+      `FPS ${stats.fps.toFixed(0)} | 物理 ${stats.physicsMs.toFixed(2)}ms | 圈 ${stats.ringCount} | 球 ${stats.ballCount} | 投掷 ${stats.throwCount}\n` +
       `绘制 ${stats.drawCalls} / ${(stats.triangles / 1000).toFixed(1)}k 三角 | ` +
       `${stats.pixelWidth}×${stats.pixelHeight} @DPR${stats.dpr.toFixed(2)} | 阴影 ${stats.shadowMapSize}`;
   }
@@ -210,7 +211,7 @@ export class DebugPanel {
   /** 蓄力中显示力度与偏转；传 null 恢复默认提示。 */
   setCharge(charge: number | null, aimRad = 0): void {
     if (charge === null) {
-      this.hintEl.textContent = '按住蓄力（越久越远）· 左右拖动瞄准 · 松手投圈';
+      this.hintEl.textContent = '按住 / 下拉蓄力 · 上甩投圈 · 横拖瞄准';
       return;
     }
     const aimDeg = (aimRad * 180) / Math.PI;
@@ -220,9 +221,12 @@ export class DebugPanel {
   }
 
   /** 同步轨迹辅助开关状态（URL 参数可能覆盖默认值）。 */
-  setAssist(enabled: boolean): void {
+  setAssist(enabled: boolean, available: boolean): void {
     const el = document.getElementById('assist-toggle') as HTMLInputElement | null;
-    if (el) el.checked = enabled;
+    if (el) {
+      el.checked = enabled;
+      el.disabled = !available;
+    }
   }
 
   /** 显示相机实际姿态与投影参数，并同步按钮高亮。 */

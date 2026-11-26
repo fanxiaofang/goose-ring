@@ -41,6 +41,10 @@ export const cameraModes: CameraMode[] = [
   { id: 'persp35', label: 'C 透视35°', kind: 'persp', distance: 14.0, fov: 35 },
 ];
 
+// Use the same radii for the visible head and neck and their Rapier colliders.
+const gooseHeadRadius = 0.216;
+const gooseNeckRadius = 0.1296;
+
 export const gameConfig = {
   camera: {
     defaultMode: 'persp30' as CameraModeId,
@@ -87,7 +91,7 @@ export const gameConfig = {
   },
   fence: {
     /** 围栏宽（X，米）。 */
-    width: 16,
+    width: 14,
     /** 围栏深（Z，米）。Z+ 为玩家一侧。 */
     depth: 10,
     /** 远侧（Z-）栏高：形成侧向可见面，提供纵深线索。 */
@@ -104,9 +108,10 @@ export const gameConfig = {
     sizeZ: 60,
   },
   /**
-   * 玩家出手点：投掷线后 0.55 m 的悬浮套圈位置。
-   * 投掷线在近栏外 0.55 m（z=5.55），圈在 z=6.10、离地 1.85 m，
+   * 玩家出手点：绝对坐标 z=6.10、离地 1.85 m 的悬浮套圈位置。
+   * 近栏 z=5.0、投掷线 z=5.55（围栏 depth=10），出手点在投掷线后 0.55 m，
    * 读作“玩家站在线后、手里举着圈”；横向随瞄准滑移（见 input.aimLateralMax）。
+   * 出手点为绝对坐标，不随围栏尺寸缩放，保证物理弹道稳定。
    */
   throwOrigin: {
     x: 0,
@@ -120,28 +125,43 @@ export const gameConfig = {
   input: {
     /** 左右最大偏转（度）：±40°。 */
     maxAimDeg: 40,
-    /** 横向拖动达到画布宽度的该比例时打满偏转。 */
-    aimFullWidthRatio: 0.3,
+    /** 横向拖动达到起手时安全区宽度的该比例时打满偏转。 */
+    aimFullWidthRatio: 0.2,
     /** 手持圈最大横移（米，±40° 时正好到达 ±该值）。 */
     aimLateralMax: 1.15,
-    /** 每秒蓄力增量（charge 0 → 1，约 1.09 s 充满）。 */
-    chargePerSec: 0.92,
+    /** 每秒蓄力增量（charge 0 → 1，约 1.72 s 充满）。 */
+    chargePerSec: 0.58,
     /** 松手时保留的最低速度比例（charge = 0 时）。 */
     minSpeedFactor: 0.35,
-    /** 蓄力低于该值且几乎没有横向拖动时视为轻点，不投掷。 */
-    tapCancelCharge: 0.16,
-    /** 轻点判定的横向位移阈值（CSS 像素）。 */
-    tapCancelPx: 8,
+    /** 无明确竖向动作时，至少按住这么久才出手（毫秒）。 */
+    minHoldMs: 175,
+    /** 从下拉回到起点时，判断是否仍有横向瞄准（CSS px）。 */
+    aimIntentPx: 8,
+    /** 区分有意拉动与轻触抖动的竖向位移。 */
+    intentPx: 10,
+    /** 正常抓圈满力下拉距离占安全区高度的比例。 */
+    pullHeightRatio: 0.25,
+    /** 底带允许轻拉，较短余量也不把小位移放大成满力（CSS px）。 */
+    minPullFullDistancePx: 72,
+    /** 前甩的满力距离。短拨使用距离比例的平方限制速度贡献（CSS px）。 */
+    flickFullChargeDistancePx: 88,
+    /** 明确上拨在末段速度较低时的基础力度。 */
+    flickMinCharge: 0.16,
+    flickWindowMs: 90,
+    /** 近期向上速度，单位 CSS px/s。 */
+    flickMinSpeed: 180,
+    flickFullSpeed: 1500,
   },
   /** 站位垫前缘和横木的世界尺寸，供布景和取景使用。 */
   throwLine: {
-    /** 近栏外沿再向玩家一侧偏移（米）。 */
-    offsetZ: 0.55,
+    /** 近栏外沿再向玩家一侧偏移（米）。0.55→0.43（2026-11-26）：围栏收窄后相机拉近，站位线在 844×390 仅距底部起手带 5.2px，后移 0.12m 补足 PL-04 的 ≥8px。纯视觉标记，不参与碰撞。 */
+    offsetZ: 0.43,
     width: 5.74,
     depth: 0.18,
   },
   /** P0-0 灰盒鹅占位：仅用于检查立体尺度，非正式鹅模型。 */
   goose: {
+    practicePosition: { x: 0, z: -1.5, rotY: 0 },
     /**
      * 8 只鹅按前/中/后三段深度分布（Z 负为远、正为近），
      * 中轴留空作为投掷通道，避免互相遮挡。
@@ -159,12 +179,50 @@ export const gameConfig = {
       { x: -2.6, z: 2.6, rotY: -0.5 },
       { x: 3.2, z: 2.1, rotY: 0.4 },
     ],
+    /**
+     * 静态场站位：按"简单 / 适中 / 比较有难度"三档，以离玩家距离划分（Z 越负越远越难），
+     * 每档内横向位置与朝向随机打散，避免 8 只齐刷刷朝向玩家的"列队盯人"观感。
+     * 相邻最近间距 ≥2.4 m（鹅身直径 1.08 m），x 最外 6.0 m，距侧栏 1.0 m。
+     * 改任一位置或 rotY 都会移动头颈目标点，必须用真实 Rapier 重新采样套中真值。
+     */
+    staticLayout: [
+      // 简单（Z ≈ 2.1 ~ 2.5，最近，轻投即可）
+      { x: -3.0, z: 2.5, rotY: 1.9 },
+      { x: 1.2, z: 2.1, rotY: -2.3 },
+      // 适中（Z ≈ -1.3 ~ -0.4，中投）
+      { x: -5.4, z: -0.6, rotY: 0.6 },
+      { x: -0.8, z: -1.3, rotY: -1.4 },
+      { x: 3.4, z: -0.4, rotY: 2.7 },
+      // 比较有难度（Z ≈ -3.5 ~ -3.0，接近满力）
+      { x: -2.6, z: -3.5, rotY: -0.9 },
+      { x: 5.0, z: -3.2, rotY: 1.3 },
+      { x: -6.0, z: -3.0, rotY: -2.6 },
+    ],
     body: { rx: 0.54, ry: 0.38, rz: 0.58, y: 0.48 },
     /** 脖子：从身体前上方弯到头部；forward 为颈部中心相对身体的前移量。 */
-    neck: { radius: 0.108, y: 1.15, forward: 0.34 },
-    head: { radius: 0.18, y: 1.6, forward: 0.39 },
+    neck: { radius: gooseNeckRadius, y: 1.15, forward: 0.34 },
+    head: { radius: gooseHeadRadius, y: 1.6, forward: 0.39 },
     /** 静态碰撞体近似尺寸（P0-2 再换成随动画同步的正式头颈 Collider）。 */
-    collider: { bodyRadius: 0.43, neckRadius: 0.108, neckHalfHeight: 0.35, headRadius: 0.18 },
+    collider: { bodyRadius: 0.43, neckRadius: gooseNeckRadius, neckHalfHeight: 0.35, headRadius: gooseHeadRadius },
+  },
+  /**
+   * P0-2 套中判定（RingJudge）。规则依据 GDD §229 与 01_技术方案 §6.1。
+   */
+  judge: {
+    /** 入颈后需保持的稳定时长（秒）。几何上环被身体卡住不会掉，0.25s 足够滤掉擦边滑脱。 */
+    settleSeconds: 0.25,
+    /**
+     * 环平面法线与竖直方向的允许夹角（度）；超出视为侧向穿入。
+     * 斜抛下落时环管会贴着鹅头侧面滑过，实测鹅头穿越瞬间环最多倾斜约 69°，
+     * 因此 55° 会误杀合法套中；75° 仍能排除接近竖直的侧向穿颈。
+     */
+    maxTiltDeg: 75,
+    /** 低于该线速度视为“基本静止”（m/s），用于识别停在鹅头/鹅身上的环。 */
+    restSpeed: 0.25,
+    /** 持续静止多久判 MISSED（秒）。 */
+    restSeconds: 0.4,
+    /** 鹅体接触在多久内仍可作为失败归因（秒）。斜抛会贴着头侧滑入颈，接触不能立即判负。 */
+    contactMemorySeconds: 0.5,
   },
   ball: {
     radius: 0.3,
@@ -177,7 +235,7 @@ export const gameConfig = {
   },
   /**
    * P0-1 真实套圈物理参数（全部为实验起点，见 04_决策与参数.md）。
-   * 环体由 16 段胶囊围成，内孔真实空出；不参与套中判定（P0-2 才做）。
+   * 环体由 16 段胶囊围成，内孔真实空出；套中判定由 P0-2 的 RingJudge 负责。
    */
   ring: {
     /** 环中心线半径（米）；内孔半径 = radius - tubeRadius。 */
@@ -210,6 +268,10 @@ export const gameConfig = {
     offsetDistance: 0.3,
     /** 静止超过该秒数后回收，避免长期堆积。 */
     sleepRecycleSec: 8,
+    /** 落地后连续低于速度和角速度阈值，再补下一只手持圈。 */
+    settleSeconds: 0.18,
+    settleSpeed: 0.2,
+    settleAngularSpeed: 1,
   },
   /**
    * 套圈出手预览（纯视觉，不参与物理与命中判定）。
@@ -219,7 +281,7 @@ export const gameConfig = {
   ringPreview: {
     ringRadius: 0.42,
     tubeRadius: 0.045,
-    /** 默认开启轨迹辅助；正式模式可关闭，只保留手持圈与力度反馈。 */
+    /** 练习场和静态场的默认轨迹辅助状态。 */
     assistDefault: true,
     /** 轨迹点数量（参考仓库 18 个，作为初始参数）。 */
     dotCount: 18,
@@ -235,5 +297,10 @@ export const gameConfig = {
     /** 蓄力时手持圈前倾，瞄准时侧倾（弧度，分别乘 charge / 归一化偏转）。 */
     chargeTiltX: -0.18,
     aimTiltZ: -0.28,
+    /** 下拉后摆 / 上拨前甩的最大位移（米，随 charge 线性）。 */
+    pullBackMax: 0.2,
+    /** 灰盒手与前臂的颜色（视觉锚点，不参与物理与判定）。 */
+    handColor: '#bd8f6d',
+    sleeveColor: '#6b5343',
   },
 } as const;

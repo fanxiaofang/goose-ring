@@ -9,6 +9,8 @@ const PEN_CENTER_Z = -0.6;
 
 export interface StallSceneHandles {
   stallGroup: THREE.Group;
+  fenceMeshes: readonly THREE.Mesh[];
+  throwLineMeshes: readonly THREE.Mesh[];
   dispose: () => void;
 }
 
@@ -38,6 +40,8 @@ export function buildStallScene(
   shadowsEnabled = true,
 ): StallSceneHandles {
   const stallGroup = new THREE.Group();
+  const fenceMeshes: THREE.Mesh[] = [];
+  const throwLineMeshes: THREE.Mesh[] = [];
   const { fence, throwLine } = gameConfig;
   const scaleX = fence.width / (2 * PEN_HALF_WIDTH);
   const scaleZ = fence.depth / (2 * PEN_HALF_DEPTH);
@@ -295,6 +299,7 @@ export function buildStallScene(
   const matBatten = new THREE.Mesh(matBattenGeo, matTrimPbr);
   matBatten.position.set(0, -0.01, matFrontZ);
   stallGroup.add(matBatten);
+  throwLineMeshes.push(matBatten);
   setShadow(matBatten, true, true);
 
   // 7. Wooden Fence Materials (satin wood contrast vs matte turf)
@@ -325,6 +330,14 @@ export function buildStallScene(
       envMapIntensity: 0.45,
     }),
   );
+  const rearWoodPbr = registerMat(woodTrimPbr.clone());
+  rearWoodPbr.color.setHex(0x796e56);
+  rearWoodPbr.roughness = 0.9;
+  rearWoodPbr.envMapIntensity = 0.25;
+  const rearTrimPbr = registerMat(rearWoodPbr.clone());
+  rearTrimPbr.color.setHex(0x897b63);
+  const rearCapPbr = registerMat(rearWoodPbr.clone());
+  rearCapPbr.color.setHex(0x6f624f);
   const stonePbr = registerMat(
     new THREE.MeshStandardMaterial({
       color: 0x9b9589,
@@ -348,32 +361,37 @@ export function buildStallScene(
     height: number,
     { corner = false, capped = true } = {},
   ) => {
+    const rear = z === minZ;
     const widthScale = corner ? 1.15 : 1;
     const h = capped ? height - 0.14 : height;
     const footing = new THREE.Mesh(footingGeo, stonePbr);
     footing.scale.set(widthScale, 1, widthScale);
     footing.position.set(x, 0.04, z);
     stallGroup.add(footing);
+    fenceMeshes.push(footing);
     setShadow(footing, false, true);
 
-    const post = new THREE.Mesh(postGeo, woodPbr);
+    const post = new THREE.Mesh(postGeo, rear ? rearWoodPbr : woodPbr);
     post.scale.set(widthScale, h / 0.94, widthScale);
     post.position.set(x, h / 2, z);
     stallGroup.add(post);
+    fenceMeshes.push(post);
     setShadow(post, true, true);
 
     if (!capped) return;
 
-    const collar = new THREE.Mesh(postCollarGeo, woodDarkPbr);
+    const collar = new THREE.Mesh(postCollarGeo, rear ? rearCapPbr : woodDarkPbr);
     collar.scale.set(widthScale, 1, widthScale);
     collar.position.set(x, h + 0.03, z);
     stallGroup.add(collar);
+    fenceMeshes.push(collar);
     setShadow(collar, true, true);
 
-    const cap = new THREE.Mesh(postCapGeo, woodDarkPbr);
+    const cap = new THREE.Mesh(postCapGeo, rear ? rearCapPbr : woodDarkPbr);
     cap.scale.set(widthScale, 1, widthScale);
     cap.position.set(x, h + 0.09, z);
     stallGroup.add(cap);
+    fenceMeshes.push(cap);
     setShadow(cap, true, true);
   };
 
@@ -411,6 +429,7 @@ export function buildStallScene(
     const peg = new THREE.Mesh(throwPegGeo, throwPegPbr);
     peg.position.set(px, 0.065, matFrontZ);
     stallGroup.add(peg);
+    throwLineMeshes.push(peg);
     setShadow(peg, true, true);
   });
 
@@ -419,19 +438,22 @@ export function buildStallScene(
   geometries.push(beamGeo);
   const addBeam = (from: THREE.Vector3, to: THREE.Vector3, trimmed = false) => {
     const direction = to.clone().sub(from);
-    const beam = new THREE.Mesh(beamGeo, woodPbr);
+    const rear = from.z === minZ && to.z === minZ;
+    const beam = new THREE.Mesh(beamGeo, rear ? rearWoodPbr : woodPbr);
     beam.position.copy(from).lerp(to, 0.5);
     beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), direction.clone().normalize());
     beam.scale.set(0.075, 0.11, direction.length());
     stallGroup.add(beam);
+    fenceMeshes.push(beam);
     setShadow(beam, true, true);
 
     if (trimmed) {
-      const trim = new THREE.Mesh(beamGeo, woodTrimPbr);
+      const trim = new THREE.Mesh(beamGeo, rear ? rearTrimPbr : woodTrimPbr);
       trim.position.set(0, 0.075, 0).applyQuaternion(beam.quaternion).add(beam.position);
       trim.quaternion.copy(beam.quaternion);
       trim.scale.set(0.095, 0.04, direction.length());
       stallGroup.add(trim);
+      fenceMeshes.push(trim);
       setShadow(trim, true, true);
     }
   };
@@ -469,10 +491,10 @@ export function buildStallScene(
     pennantCount,
   );
   const pennantPalette = [
-    new THREE.Color(0x8fb082),
-    new THREE.Color(0xc7a76c),
-    new THREE.Color(0xdad2c3),
-    new THREE.Color(0xbf7d6b),
+    new THREE.Color(0x777c60),
+    new THREE.Color(0x95805f),
+    new THREE.Color(0x978974),
+    new THREE.Color(0x906e60),
   ];
   for (let i = 0; i < pennantCount; i++) {
     const spanIdx = Math.floor(i / 4);
@@ -492,7 +514,7 @@ export function buildStallScene(
   if (pennantsMesh.instanceColor) pennantsMesh.instanceColor.needsUpdate = true;
   pennantsMesh.computeBoundingSphere();
   stallGroup.add(pennantsMesh);
-  setShadow(pennantsMesh, true, false);
+  setShadow(pennantsMesh, false, false);
 
   // 9. Exterior Stall Props
 
@@ -1165,6 +1187,8 @@ export function buildStallScene(
 
   return {
     stallGroup,
+    fenceMeshes,
+    throwLineMeshes,
     dispose: () => {
       geometries.forEach((g) => g.dispose());
       materials.forEach((m) => m.dispose());

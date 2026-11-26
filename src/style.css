@@ -11,101 +11,430 @@ body {
   user-select: none;
 }
 
-#game-canvas {
+#game-surface {
   position: fixed;
+  inset: 0;
+  width: 100dvw;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+#game-canvas {
+  position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   display: block;
   touch-action: none; /* 触摸事件不被浏览器手势拦截 */
+  -webkit-touch-callout: none;
 }
 
-#throw-hud {
-  position: fixed;
-  inset: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))
-    auto max(12px, env(safe-area-inset-left));
-  z-index: 12;
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 6px 10px;
-  flex-wrap: wrap;
+#safe-area-probe {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+  padding: var(--game-safe-top, env(safe-area-inset-top)) var(--game-safe-right, env(safe-area-inset-right))
+    var(--game-safe-bottom, env(safe-area-inset-bottom)) var(--game-safe-left, env(safe-area-inset-left));
+}
+
+[hidden] {
+  display: none;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.game-hud,
+#throw-start-hint,
+#lobby-ad {
+  position: absolute;
+  z-index: 2;
   color: #faf7ef;
   pointer-events: none;
 }
 
-#throw-hud[hidden],
-#debug-panel[hidden] {
+.game-hud[hidden],
+.hud-control[hidden],
+#throw-start-hint[hidden],
+#lobby-ad[hidden],
+#formal-stats[hidden] {
   display: none;
 }
 
-.throw-hud-stats,
-.throw-hud-actions {
+.hud-row,
+.hud-group,
+.mode-nav,
+.throw-hud-stats {
   display: flex;
-  gap: 8px;
+  gap: 5px;
   align-items: center;
-  flex-wrap: wrap;
 }
 
+.hud-row {
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.mode-nav {
+  justify-content: center;
+  margin-top: 4px;
+}
+
+.mode-nav .hud-control {
+  flex: 0 1 124px;
+  background: #3e3424;
+}
+
+.hud-control,
+.hud-label,
 .throw-hud-stats {
   box-sizing: border-box;
+  display: flex;
+  justify-content: center;
+  align-items: center;
   min-height: 44px;
   margin: 0;
-  padding: 6px 10px;
-  border-radius: 10px;
-  background: rgb(29 27 21 / 92%);
-  font-size: clamp(11px, 1.8vw, 14px);
-}
-
-.throw-hud-stats div {
-  display: flex;
-  align-items: baseline;
-  gap: 4px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 8px;
+  color: #faf7ef;
+  background: #211f19;
+  font: 600 13px/1.2 system-ui, 'Microsoft YaHei', sans-serif;
   white-space: nowrap;
 }
 
-.throw-hud-stats dd {
-  margin: 0;
-  color: #f5b454;
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
+.hud-label b {
+  margin-inline-start: 5px;
+  color: #f7bf69;
 }
 
-.throw-hud-actions {
-  gap: 5px;
-  margin-inline-start: auto;
-  pointer-events: auto;
-}
-
-.throw-hud-actions button {
+.hud-control {
   min-width: 44px;
-  min-height: 44px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: 10px;
-  color: inherit;
-  background: rgb(29 27 21 / 92%);
-  font: inherit;
-  font-size: 13px;
+  pointer-events: auto;
+  text-decoration: none;
   cursor: pointer;
 }
 
-.throw-hud-actions button:hover,
-.throw-hud-actions button[aria-expanded='true'] {
+#coin-balance,
+#open-personal-record {
+  gap: 5px;
+}
+
+#coin-balance b,
+#open-personal-record b {
+  color: #f7bf69;
+}
+
+#open-ring-exchange {
+  flex-direction: column;
+  gap: 2px;
+}
+
+#open-ring-exchange span {
+  color: #f7bf69;
+  font-size: 11px;
+}
+
+.hud-control:disabled {
+  color: #d5cbbd;
+  cursor: default;
+}
+
+.hud-control:hover:not(:disabled),
+.hud-control[aria-expanded='true'] {
   background: #4d3924;
 }
 
-#sound-toggle[aria-pressed='false'] {
+.hud-control:focus-visible {
+  outline: 2px solid #f7bf69;
+  outline-offset: 2px;
+}
+
+.hud-control[aria-pressed='false'] {
   color: #d3c8b7;
   text-decoration: line-through;
 }
 
+.throw-hud-stats {
+  gap: 10px;
+}
+
+.throw-hud-stats div,
+.throw-hud-stats dt {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.throw-hud-stats dd {
+  margin: 0;
+  color: #f7bf69;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-icon {
+  display: inline-block;
+  position: relative;
+  flex: none;
+}
+
+.icon-ring {
+  width: 12px;
+  height: 8px;
+  border: 2px solid #f7bf69;
+  border-radius: 50%;
+}
+
+.icon-check {
+  color: #b4dfa0;
+  font-size: 16px;
+}
+
+.icon-goose {
+  width: 11px;
+  height: 15px;
+  border-left: 5px solid currentColor;
+  border-radius: 9px 0 0 4px;
+  box-sizing: border-box;
+}
+
+.icon-goose::before,
+.icon-goose::after {
+  position: absolute;
+  content: '';
+}
+
+.icon-goose::before {
+  top: 0;
+  left: -4px;
+  width: 9px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.icon-goose::after {
+  top: 4px;
+  left: 4px;
+  width: 6px;
+  height: 3px;
+  border-radius: 0 4px 4px 0;
+  background: #f7bf69;
+}
+
+#throw-start-hint {
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-start;
+  padding: 0 0 6px 10px;
+  font-size: 11px;
+  line-height: 14px;
+}
+
+#throw-start-hint .hint-text {
+  padding: 3px 9px;
+  border-radius: 7px;
+  background: rgb(33 31 25 / 72%);
+}
+
+#throw-start-hint .hint-text[hidden] {
+  display: none;
+}
+
+.meter-panel {
+  display: grid;
+  gap: 3px;
+  width: clamp(150px, 24vw, 220px);
+  padding: 6px 9px 7px;
+  border-radius: 8px;
+  background: rgb(33 31 25 / 62%);
+}
+
+.meter-panel[hidden] {
+  display: none;
+}
+
+.meter-row {
+  display: flex;
+  justify-content: space-between;
+  color: #f3e9d6;
+}
+
+.meter-track {
+  position: relative;
+  height: 3px;
+  border-radius: 2px;
+  background: rgb(250 247 239 / 26%);
+  overflow: hidden;
+}
+
+.meter-track > i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  border-radius: 2px;
+  background: #f7bf69;
+}
+
+.aim-track::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -1px;
+  bottom: -1px;
+  width: 1px;
+  background: rgb(250 247 239 / 55%);
+}
+
+#lobby-ad {
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  border: 1px dashed #f8e6bd;
+  border-radius: 8px;
+  color: #faf7ef;
+  background: rgb(33 31 25 / 86%);
+  font-size: 13px;
+}
+
+.game-dialog {
+  padding: 14px 18px;
+  border: 1px solid #716048;
+  border-radius: 10px;
+  color: #faf7ef;
+  background: #3a3024;
+  box-sizing: border-box;
+  max-width: calc(100% - 32px);
+  max-height: calc(100% - 24px);
+  overflow: auto;
+}
+
+.game-dialog::backdrop {
+  background: rgb(0 0 0 / 50%);
+}
+
+.game-dialog h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+
+.game-dialog p,
+.game-dialog label,
+.game-dialog legend {
+  font-size: 13px;
+}
+
+.game-dialog p {
+  margin: 0 0 8px;
+}
+
+.dialog-actions,
+.exchange-packs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.dialog-actions {
+  margin-top: 10px;
+}
+
+.dialog-actions[hidden] {
+  display: none;
+}
+
+.record-table {
+  border-collapse: collapse;
+  font-size: 13px;
+  text-align: left;
+}
+
+.record-table th,
+.record-table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid #716048;
+}
+
+.round-summary {
+  display: grid;
+  margin: 0;
+  font-size: 14px;
+}
+
+.round-summary div {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 9px 0;
+  border-bottom: 1px solid #716048;
+}
+
+.round-summary dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+#round-result {
+  width: 300px;
+}
+
+.game-dialog .primary-control:not(:disabled) {
+  background: #f7bf69;
+  color: #211f19;
+}
+
+#exchange-mode {
+  display: inline-block;
+  margin-inline-start: 4px;
+}
+
+.exchange-packs {
+  margin: 8px 0 0;
+  padding: 4px;
+  border: 1px solid #907a5a;
+  border-radius: 7px;
+}
+
+.exchange-packs label {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 8px;
+  gap: 5px;
+  cursor: pointer;
+}
+
+.exchange-packs input {
+  accent-color: #f7bf69;
+}
+
+#exchange-status:not(:empty) {
+  margin-top: 8px;
+  color: #f7bf69;
+}
+
+#exchange-status:empty {
+  display: none;
+}
+
+#game-settings form {
+  margin-top: 8px;
+}
+
 /* ---- 顶栏下方的调试抽屉 ---- */
 #debug-panel {
-  position: fixed;
-  top: calc(max(8px, env(safe-area-inset-top)) + 50px);
-  right: max(12px, env(safe-area-inset-right));
-  z-index: 10;
+  position: absolute;
+  top: var(--play-top);
+  right: calc(var(--safe-right) + 8px);
+  z-index: 4;
   padding: 8px 10px;
   background: rgba(20, 24, 30, 0.72);
   color: #eee;
@@ -114,7 +443,7 @@ body {
   line-height: 1.6;
   pointer-events: auto;
   max-width: 360px;
-  max-height: calc(100dvh - max(8px, env(safe-area-inset-top)) - 58px - env(safe-area-inset-bottom));
+  max-height: var(--play-height);
   overflow-y: auto;
   box-sizing: border-box;
 }
@@ -122,6 +451,20 @@ body {
 #debug-panel .panel-title {
   font-weight: 600;
   margin-bottom: 4px;
+}
+
+/* P0-2 判定状态视图（?judge=1） */
+#judge-debug {
+  position: absolute;
+  top: calc(var(--play-top, 0px) + 6px);
+  left: 8px;
+  z-index: 4;
+  padding: 4px 8px;
+  background: rgba(20, 24, 30, 0.72);
+  color: #eee;
+  border-radius: 6px;
+  font: 11px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
+  pointer-events: none;
 }
 
 #debug-panel .sub-title {
@@ -194,62 +537,60 @@ body {
   opacity: 0.7;
 }
 
-/* ---- 正式 UI 安全区参考带（仅调试参考，不属于正式界面） ---- */
+/* ---- Layout inspection ---- */
 #ui-safe-guide {
-  position: fixed;
+  position: absolute;
   inset: 0;
-  z-index: 5;
+  z-index: 3;
   pointer-events: none;
 }
 
-#ui-safe-guide[hidden] {
-  display: none;
-}
-
-#ui-safe-guide .safe-band {
+#ui-safe-guide .layout-box {
   position: absolute;
-  left: 0;
-  right: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   box-sizing: border-box;
-  border: 1px dashed rgba(255, 255, 255, 0.75);
-  color: #fff;
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+  border: 1px solid currentColor;
+  color: #93e9ff;
 }
 
-#ui-safe-guide .safe-band span {
-  padding: 1px 8px;
-  border-radius: 3px;
-  background: rgba(20, 24, 30, 0.45);
+#ui-safe-guide .layout-box[data-kind='ui'] {
+  color: #ffe480;
+  border-style: dashed;
 }
 
-/* 顶部 12%：正式标题 / 分数 / 剩余圈数 */
-#ui-safe-guide .safe-top {
-  top: 0;
-  height: 12%;
-  background: repeating-linear-gradient(
-    45deg,
-    rgba(255, 210, 63, 0.16) 0 10px,
-    rgba(255, 210, 63, 0.05) 10px 20px
-  );
-  border-width: 0 0 1px 0;
-  align-items: center;
+#ui-safe-guide .layout-box[data-kind='world'] {
+  color: #d1ff9e;
 }
 
-/* 底部 8%：操作提示（不得覆盖投掷热区，仅作参考） */
-#ui-safe-guide .safe-bottom {
-  bottom: 0;
-  height: 8%;
-  background: repeating-linear-gradient(
-    -45deg,
-    rgba(53, 214, 232, 0.16) 0 10px,
-    rgba(53, 214, 232, 0.05) 10px 20px
-  );
-  border-width: 1px 0 0 0;
+#ui-safe-guide .layout-box[data-kind='hit'] {
+  color: #ffc0a0;
+  border-style: dashed;
+}
+
+#ui-safe-guide .layout-box span {
+  position: absolute;
+  inset: auto auto 100% 0;
+  padding: 1px 3px;
+  background: #182022;
+  white-space: nowrap;
+  font: 10px/1.25 system-ui, sans-serif;
+}
+
+#ui-safe-guide .layout-box:is([data-kind='ui'], [data-kind='play']) span {
+  inset: 0 auto auto 0;
+}
+
+#ui-safe-guide .layout-box[data-kind='hit'] span {
+  inset: 100% 0 auto auto;
+}
+
+#ui-safe-guide .layout-box[data-label^='安全区'] span,
+#ui-safe-guide .layout-box[data-label='顶栏'] span {
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+#ui-safe-guide .layout-box[data-label='顶栏'] span {
+  top: 15px;
 }
 
 /* ---- 竖屏旋转提示 ---- */

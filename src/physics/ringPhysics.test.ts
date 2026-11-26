@@ -2,10 +2,11 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { gameConfig } from '../config/gameConfig';
-import { getGooseNeckWorldPosition } from '../goose/GoosePlaceholder';
+import { getGooseNeckWorldPosition, type GooseLayoutEntry } from '../goose/GoosePlaceholder';
 import { createRingRigidBody } from '../ring/ringBody';
 import { horizontalRingRotation, ringInnerRadius } from '../ring/ringGeometry';
-import { aimLateralOffset, speedFromCharge, velocityWithYaw, type Vec3Like } from '../ring/throwMath';
+import { buildPlayerThrow } from '../ring/playerThrow';
+import { sampleThrowArc, type Vec3Like } from '../ring/throwMath';
 import { FixedStepAccumulator } from './fixedStep';
 import { PhysicsWorld } from './PhysicsWorld';
 
@@ -100,33 +101,76 @@ describe('套圈真实内孔', () => {
   });
 });
 
-it('调高鹅头颈后，最近一只鹅仍有多个可从头上穿入的手动投掷输入', async () => {
-  const { goose, input, throwOrigin } = gameConfig;
-  const nearest = goose.layout.reduce((front, entry) => entry.z > front.z ? entry : front);
-  const neck = getGooseNeckWorldPosition(nearest);
-  const head = new THREE.Vector3(
-    nearest.x + Math.sin(nearest.rotY) * goose.head.forward,
-    goose.head.y,
-    nearest.z + Math.cos(nearest.rotY) * goose.head.forward,
-  );
-  const physics = await PhysicsWorld.create(new THREE.Scene());
-  const xzAim = THREE.MathUtils.degToRad(-29.2);
-  const lateral = aimLateralOffset(xzAim, THREE.MathUtils.degToRad(input.maxAimDeg), input.aimLateralMax);
-  const origin = { ...throwOrigin, x: throwOrigin.x + lateral };
-  const headClearance = ringInnerRadius(ring.radius, ring.tubeRadius) - goose.collider.headRadius;
-  let successfulCharges = 0;
+const originalBoardCases = [
+  { name: '最近鹅', index: 6, aimDeg: -30.2, charges: [0.265, 0.27, 0.28] },
+  { name: '左后鹅', index: 0, aimDeg: -28.6, charges: [0.86, 0.865, 0.87] },
+  { name: '中后鹅', index: 1, aimDeg: -9.3, charges: [0.795, 0.8, 0.805] },
+  { name: '右后鹅', index: 2, aimDeg: 21.2, charges: [0.8, 0.805, 0.81] },
+];
 
-  try {
-    for (const charge of [0.27, 0.28, 0.285, 0.295, 0.30, 0.305]) {
-      const speed = speedFromCharge(ring.speed, charge, input.minSpeedFactor);
+it.each(originalBoardCases)('$name 有多个正常投掷输入能从鹅头穿入颈区', async ({ index, aimDeg, charges }) => {
+  const results = await replayNeckEntries(gameConfig.goose.layout, index, charges.map(charge => [aimDeg, charge]));
+  expect(results.filter(Boolean).length).toBeGreaterThanOrEqual(2);
+});
+
+const staticCases = [
+  { name: '简单·左近', index: 0, samples: [[-27.3, 0.312], [-27.3, 0.326]] },
+  { name: '简单·右近', index: 1, samples: [[8.5, 0.338], [8.5, 0.35]] },
+  { name: '适中·左后', index: 2, samples: [[-34, 0.652], [-34, 0.666]] },
+  { name: '适中·中后', index: 3, samples: [[-8.6, 0.64], [-8.6, 0.654]] },
+  { name: '适中·右后', index: 4, samples: [[22.2, 0.644], [22.2, 0.65]] },
+  { name: '有难度·左中', index: 5, samples: [[-15.5, 0.816], [-15.5, 0.834]] },
+  { name: '有难度·右中', index: 6, samples: [[25.7, 0.86], [25.7, 0.88]] },
+  { name: '有难度·极左', index: 7, samples: [[-29.9, 0.894], [-29.9, 0.908]] },
+] satisfies Array<{ name: string; index: number; samples: Array<[number, number]> }>;
+
+it.each(staticCases)('静态场 $name 有可重放的名义投掷、邻近投掷及偏转反例', async ({ index, samples }) => {
+  const [aimDeg, charge] = samples[0]!;
+  expect(await replayNeckEntries(gameConfig.goose.staticLayout, index, [
+    ...samples,
+    [aimDeg + 5, charge],
+  ], true)).toEqual([...samples.map(() => true), false]);
+});
+
+it('练习场中线站位允许不同力度的正前方投掷入颈', async () => {
+  expect(await replayNeckEntries([gameConfig.goose.practicePosition], 0, [
+    [0, 0.6175],
+    [0, 0.62],
+    [0, 0.6325],
+    [5, 0.62],
+  ])).toEqual([true, true, true, false]);
+});
+
+async function replayNeckEntries(
+  layout: readonly GooseLayoutEntry[],
+  index: number,
+  samples: ReadonlyArray<readonly [aimDeg: number, charge: number]>,
+  requireNeckCrossing = false,
+): Promise<boolean[]> {
+  const { goose } = gameConfig;
+  const target = layout[index];
+  const neck = getGooseNeckWorldPosition(target);
+  const head = new THREE.Vector3(
+    target.x + Math.sin(target.rotY) * goose.head.forward,
+    goose.head.y,
+    target.z + Math.cos(target.rotY) * goose.head.forward,
+  );
+  const headClearance = ringInnerRadius(ring.radius, ring.tubeRadius) - goose.collider.headRadius;
+
+  return Promise.all(samples.map(async ([aimDeg, charge]) => {
+    const physics = await PhysicsWorld.create(new THREE.Scene(), layout);
+    const spec = buildPlayerThrow(charge, THREE.MathUtils.degToRad(aimDeg), ring);
+    try {
       const body = spawnRing(
-        physics.world, origin, velocityWithYaw(speed, ring.elevationDeg, xzAim),
-        { x: 0, y: ring.spin, z: 0 },
+        physics.world, spec.position, spec.linvel, spec.angvel,
       );
       const localHead = new THREE.Vector3();
       const inverseRotation = new THREE.Quaternion();
       const previous = new THREE.Vector3();
       let passedHead = false;
+      let passedNeck = false;
+      let previousNeckZ = -Infinity;
+      const localNeck = new THREE.Vector3();
       for (let frame = 0; frame < 90; frame++) {
         const pos = body.translation();
         const rot = body.rotation();
@@ -136,22 +180,63 @@ it('调高鹅头颈后，最近一只鹅仍有多个可从头上穿入的手动�
           passedHead ||= Math.hypot(previous.x, previous.y) < headClearance;
         }
         previous.copy(localHead);
+        localNeck.set(neck.x, neck.y, neck.z).sub(pos).applyQuaternion(inverseRotation);
+        if (passedHead && previousNeckZ < 0 && localNeck.z >= 0
+            && Math.hypot(localNeck.x, localNeck.y)
+              < ringInnerRadius(ring.radius, ring.tubeRadius) - goose.collider.neckRadius) {
+          passedNeck = true;
+        }
+        previousNeckZ = localNeck.z;
         physics.step();
       }
       const end = body.translation();
-      if (passedHead && end.y > goose.body.y + goose.body.ry / 2 && end.y < neck.y
-          && Math.hypot(end.x - neck.x, end.z - neck.z) < 0.3) {
-        successfulCharges++;
-      }
-      physics.world.removeRigidBody(body);
+      return passedHead && (!requireNeckCrossing || passedNeck)
+        && end.y > goose.body.y + goose.body.ry / 2 && end.y < neck.y
+        && Math.hypot(end.x - neck.x, end.z - neck.z) < 0.3;
+    } finally {
+      physics.world.free();
     }
+  }));
+}
+
+it.each([0.05, 0.6])('当前线阻尼 %f 的无遮挡预览与固定步进首碰位置接近', (linearDamping) => {
+  const world = makeWorld();
+  const ground = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+  world.createCollider(RAPIER.ColliderDesc.cuboid(40, 0.5, 30).setTranslation(0, -0.5, 0), ground);
+  const spec = buildPlayerThrow(0.65, 0.2, ring);
+  const body = spawnRing(world, spec.position, spec.linvel, spec.angvel);
+  body.setLinearDamping(linearDamping);
+  const predicted = sampleThrowArc(spec.position, spec.linvel, 9.81, 18, linearDamping).at(-1)!;
+  try {
+    let contacted = false;
+    for (let tick = 0; tick < 240 && !contacted; tick++) {
+      world.step();
+      for (let i = 0; i < body.numColliders(); i++) {
+        world.contactPairsWith(body.collider(i), () => { contacted = true; });
+      }
+    }
+    expect(contacted).toBe(true);
+    const actual = body.translation();
+    expect(Math.hypot(actual.x - predicted.x, actual.z - predicted.z)).toBeLessThan(0.2);
   } finally {
-    physics.world.free();
+    world.free();
   }
-  expect(successfulCharges).toBeGreaterThanOrEqual(2);
 });
 
 describe('套圈地面碰撞与稳定', () => {
+  it('空中低速的圈不会被当成接地，真实落地后才有地面接触', async () => {
+    const physics = await PhysicsWorld.create(new THREE.Scene(), []);
+    try {
+      const body = spawnRing(physics.world, { x: 0, y: 0.7, z: 0 });
+      physics.step();
+      expect(physics.isTouchingGround(body)).toBe(false);
+      for (let tick = 0; tick < 120; tick++) physics.step();
+      expect(physics.isTouchingGround(body)).toBe(true);
+    } finally {
+      physics.world.free();
+    }
+  });
+
   it('水平落地的套圈会停在地面上，而不是无限下沉', () => {
     const world = makeWorld();
     const ground = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
@@ -242,7 +327,7 @@ describe('高速防穿透（CCD）', () => {
     const wallBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
     // 与游戏内围栏同厚（0.08 m），高 1.05 m。
     world.createCollider(
-      RAPIER.ColliderDesc.cuboid(8, gameConfig.fence.farHeight / 2, 0.04).setTranslation(
+      RAPIER.ColliderDesc.cuboid(gameConfig.fence.width / 2, gameConfig.fence.farHeight / 2, 0.04).setTranslation(
         0,
         gameConfig.fence.farHeight / 2,
         -1,

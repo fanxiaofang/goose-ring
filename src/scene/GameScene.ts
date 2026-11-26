@@ -7,15 +7,32 @@ import {
   type CameraModeId,
 } from '../config/gameConfig';
 import {
+  boxCorners,
   computeAdaptivePerspectiveDistance,
   computeCameraPosition,
   derivePitchYaw,
+  framePerspective,
+  projectBounds,
   toVector3,
   type CameraState,
 } from './cameraUtils';
 import { createGoosePlaceholder, type GooseLayoutEntry } from '../goose/GoosePlaceholder';
 import { buildStallScene } from './stallScene';
 import { createSimpleTextures } from './stallTextures';
+import type { GameLayout, Rect } from '../layout/computeLayout';
+
+type FramingBounds = { label: string; points: readonly THREE.Vector3[] };
+interface GooseFraming extends FramingBounds {
+  head: readonly THREE.Vector3[];
+  neckSection: readonly THREE.Vector3[];
+}
+
+export interface ProjectedBounds {
+  label: string;
+  rect: Rect;
+  headHeight?: number;
+  neckWidth?: number;
+}
 
 /**
  * 3D 庙会摊位与当前鹅模型的渲染场景。
@@ -35,14 +52,17 @@ export class GameScene {
   private currentPitchDeg: number;
   private readonly currentYawDeg: number;
   private readonly lookTarget: THREE.Vector3;
-  private aspect: number;
+  private layout: GameLayout;
+  private readonly framing: readonly FramingBounds[];
+  private readonly gooseFraming: readonly GooseFraming[];
 
   constructor(
     canvas: HTMLCanvasElement,
+    layout: GameLayout,
     gooseLayout: readonly GooseLayoutEntry[] = gameConfig.goose.layout,
   ) {
+    this.layout = layout;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, gameConfig.render.maxPixelRatio));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 0.96;
     this.renderer.shadowMap.enabled = true;
@@ -65,11 +85,10 @@ export class GameScene {
     pmrem.dispose();
 
     // ---- 相机：正交与透视各一台，按模式切换 ----
-    this.aspect = window.innerWidth / window.innerHeight;
     const defaultMode = cameraModes.find((mode) => mode.id === gameConfig.camera.defaultMode)!;
     this.orthoCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200);
     // 窄视场长焦透视：保留近大远小纵深，避免广角畸变；near/far 覆盖自适应后拉范围。
-    this.perspCamera = new THREE.PerspectiveCamera(30, this.aspect, 0.1, 80);
+    this.perspCamera = new THREE.PerspectiveCamera(30, 1, 0.1, 80);
     this.activeMode = defaultMode;
     this.activeCamera = defaultMode.kind === 'ortho' ? this.orthoCamera : this.perspCamera;
 
@@ -104,7 +123,8 @@ export class GameScene {
     const textures = createSimpleTextures();
     const maxAnisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
     for (const texture of Object.values(textures)) texture.anisotropy = maxAnisotropy;
-    this.scene.add(buildStallScene(textures).stallGroup);
+    const stall = buildStallScene(textures);
+    this.scene.add(stall.stallGroup);
 
     // ---- 灰盒鹅占位（检查立体尺度）----
     this.gooseGroup = new THREE.Group();
@@ -113,9 +133,61 @@ export class GameScene {
     }
     this.scene.add(this.gooseGroup);
 
-    window.addEventListener('resize', () => this.onResize());
-    // 初次同步尺寸与相机姿态（onResize 内部会调用 applyCameraPose）。
-    this.onResize();
+    this.scene.updateMatrixWorld(true);
+    const { x, y, z } = gameConfig.throwOrigin;
+    const { ringRadius, tubeRadius, hoverAmplitude } = gameConfig.ringPreview;
+    const r = ringRadius + tubeRadius;
+    const move = gameConfig.input.aimLateralMax + r;
+    this.framing = [
+      { label: '围栏', points: stall.fenceMeshes.flatMap(meshCorners) },
+      { label: '站位线', points: stall.throwLineMeshes.flatMap(meshCorners) },
+      {
+        label: '手持圈包络',
+        points: boxCorners(new THREE.Box3(
+          new THREE.Vector3(x - move, y - r - hoverAmplitude, z - r),
+          new THREE.Vector3(x + move, y + r + hoverAmplitude, z + r),
+        )),
+      },
+    ];
+    this.gooseFraming = this.gooseGroup.children.map((goose, index) => {
+      const head = goose.getObjectByName('head') as THREE.Mesh;
+      const neck = goose.getObjectByName('neck') as THREE.Mesh<THREE.TubeGeometry>;
+      const sectionSize = neck.geometry.parameters.radialSegments + 1;
+      const middle = Math.floor(neck.geometry.parameters.tubularSegments / 2) * sectionSize;
+      return {
+        label: `鹅 ${index + 1} 头颈`,
+        points: [...meshCorners(head), ...meshCorners(neck)],
+        head: meshVertices(head, 0, head.geometry.getAttribute('position').count),
+        neckSection: meshVertices(neck, middle, sectionSize),
+      };
+    });
+    this.setLayout(layout);
+  }
+
+  setLayout(layout: GameLayout): void {
+    this.layout = layout;
+    const { width, height } = layout.viewport;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, gameConfig.render.maxPixelRatio));
+    this.renderer.setSize(width, height, false);
+    this.applyCameraPose();
+  }
+
+  getProjectedBounds(): ProjectedBounds[] {
+    const measure = (points: readonly THREE.Vector3[]) =>
+      projectBounds(points, this.activeCamera, this.layout.viewport);
+    return [
+      ...this.framing.map(({ label, points }) => ({ label, rect: measure(points) })),
+      ...this.gooseFraming.map(({ label, points, head, neckSection }) => ({
+        label,
+        rect: measure(points),
+        headHeight: measure(head).height,
+        neckWidth: measure(neckSection).width,
+      })),
+    ];
+  }
+
+  getThrowLineBounds(): Rect {
+    return projectBounds(this.framing[1].points, this.activeCamera, this.layout.viewport);
   }
 
   /** 当前生效的相机（正交或透视）。 */
@@ -164,6 +236,28 @@ export class GameScene {
   private applyCameraPose(): void {
     const { target } = gameConfig.camera;
     const mode = this.activeMode;
+    const { viewport, play, aimStart } = this.layout;
+    const aspect = viewport.width / viewport.height;
+    if (mode.kind === 'persp' && mode.id === gameConfig.camera.defaultMode) {
+      this.perspCamera.fov = mode.fov;
+      framePerspective(this.perspCamera, {
+        baseDistance: mode.distance,
+        pitchDeg: this.currentPitchDeg,
+        yawDeg: this.currentYawDeg,
+        target,
+        viewport,
+        play,
+        perimeter: aimStart ? this.framing[0].points : undefined,
+        points: [
+          ...this.framing.slice(aimStart ? 1 : 0).flatMap(({ points }) => points),
+          ...this.gooseGroup.children.flatMap((goose) =>
+            boxCorners(new THREE.Box3().setFromObject(goose)),
+          ),
+        ],
+      });
+      return;
+    }
+
     // 透视模式按屏幕宽高比沿同一俯仰射线后拉，保证整个围栏完整入画；正交模式保持设计距离。
     const distance =
       mode.kind === 'persp'
@@ -172,15 +266,10 @@ export class GameScene {
             fovDeg: mode.fov,
             pitchDeg: this.currentPitchDeg,
             yawDeg: this.currentYawDeg,
-            aspect: this.aspect,
+            aspect,
             target,
             fenceWidth: gameConfig.fence.width,
             fenceDepth: gameConfig.fence.depth,
-            ...(mode.id === 'persp30' && {
-              postSize: gameConfig.fence.postSize,
-              throwLine: gameConfig.throwLine,
-              margin: 1.1,
-            }),
             fenceHeight: Math.max(
               gameConfig.fence.farHeight,
               gameConfig.fence.sideHeight,
@@ -198,34 +287,41 @@ export class GameScene {
     if (mode.kind === 'ortho') {
       this.orthoCamera.position.copy(vpos);
       this.orthoCamera.lookAt(this.lookTarget);
-      this.updateOrthoFrustum(mode.viewHeight);
+      this.updateOrthoFrustum(mode.viewHeight, aspect);
       this.activeCamera = this.orthoCamera;
     } else {
       this.perspCamera.position.copy(vpos);
       this.perspCamera.lookAt(this.lookTarget);
       this.perspCamera.fov = mode.fov;
-      this.perspCamera.aspect = this.aspect;
-      this.perspCamera.updateProjectionMatrix();
+      this.perspCamera.aspect = aspect;
+      this.perspCamera.far = 80;
+      this.perspCamera.clearViewOffset();
       this.activeCamera = this.perspCamera;
     }
+    this.activeCamera.updateMatrixWorld(true);
   }
 
-  private updateOrthoFrustum(viewHeight: number): void {
-    this.orthoCamera.left = (-viewHeight * this.aspect) / 2;
-    this.orthoCamera.right = (viewHeight * this.aspect) / 2;
+  private updateOrthoFrustum(viewHeight: number, aspect: number): void {
+    this.orthoCamera.left = (-viewHeight * aspect) / 2;
+    this.orthoCamera.right = (viewHeight * aspect) / 2;
     this.orthoCamera.top = viewHeight / 2;
     this.orthoCamera.bottom = -viewHeight / 2;
     this.orthoCamera.updateProjectionMatrix();
   }
 
-  private onResize(): void {
-    this.aspect = window.innerWidth / window.innerHeight;
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
-    // 宽高比变化会改变透视模式的所需距离，统一重算相机姿态。
-    this.applyCameraPose();
-  }
-
   render(): void {
     this.renderer.render(this.scene, this.activeCamera);
   }
+}
+
+function meshCorners(mesh: THREE.Mesh): THREE.Vector3[] {
+  if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+  return boxCorners(mesh.geometry.boundingBox!).map((point) => point.applyMatrix4(mesh.matrixWorld));
+}
+
+function meshVertices(mesh: THREE.Mesh, start: number, count: number): THREE.Vector3[] {
+  const positions = mesh.geometry.getAttribute('position');
+  return Array.from({ length: count }, (_, index) =>
+    new THREE.Vector3().fromBufferAttribute(positions, start + index).applyMatrix4(mesh.matrixWorld),
+  );
 }

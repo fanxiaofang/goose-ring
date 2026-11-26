@@ -54,27 +54,34 @@ export function createGoosePlaceholder(entry: GooseLayoutEntry): THREE.Group {
     new THREE.TubeGeometry(neckCurve, 20, neck.radius, 10, false),
     bodyMat,
   );
+  neckMesh.name = 'neck';
   neckMesh.castShadow = true;
   group.add(neckMesh);
 
   // 头
   const headMesh = new THREE.Mesh(new THREE.SphereGeometry(head.radius, 20, 16), bodyMat);
+  headMesh.name = 'head';
   headMesh.position.set(0, head.y, head.forward);
   headMesh.castShadow = true;
   group.add(headMesh);
 
+  const headDetailScale = head.radius / 0.18;
   // 喙：指向 +Z（鹅面向的方向）
   const beakMesh = new THREE.Mesh(detailGeo, billMat);
   beakMesh.scale.set(0.093, 0.049, 0.144);
   beakMesh.rotation.x = 0.22;
-  beakMesh.position.set(0, head.y - 0.04, head.forward + 0.185);
+  beakMesh.position.set(0, head.y - 0.04, head.forward + head.radius + 0.005);
   beakMesh.castShadow = true;
   group.add(beakMesh);
 
   for (const sx of [-1, 1]) {
     const eye = new THREE.Mesh(detailGeo, eyeMat);
     eye.scale.setScalar(0.033);
-    eye.position.set(sx * 0.125, head.y + 0.056, head.forward + 0.114);
+    eye.position.set(
+      sx * 0.125 * headDetailScale,
+      head.y + 0.056 * headDetailScale,
+      head.forward + 0.114 * headDetailScale,
+    );
     group.add(eye);
 
     const wing = new THREE.Mesh(detailGeo, wingMat);

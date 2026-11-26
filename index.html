@@ -7,29 +7,165 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
     />
     <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="鹅有一套" />
     <title>鹅有一套</title>
   </head>
   <body>
-    <canvas id="game-canvas"></canvas>
-    <header id="throw-hud" aria-label="投掷场顶栏" hidden>
-      <dl class="throw-hud-stats">
-        <div><dt>本盘</dt><dd>—</dd></div>
-        <div><dt>个人累计</dt><dd>—</dd></div>
-        <div><dt>正式圈</dt><dd>—</dd></div>
-        <div><dt>庙会币</dt><dd>—</dd></div>
-        <div><dt>投掷</dt><dd id="throw-count">0</dd></div>
-      </dl>
-      <div class="throw-hud-actions">
-        <button id="sound-toggle" type="button" aria-pressed="true">音效</button>
-        <button id="clear-field" type="button">清场</button>
-        <button id="debug-toggle" type="button" aria-controls="debug-panel" aria-expanded="false">调试</button>
+    <div id="game-surface">
+      <canvas id="game-canvas"></canvas>
+      <div id="safe-area-probe" aria-hidden="true"></div>
+      <header id="lobby-hud" class="game-hud" aria-label="大厅" hidden>
+        <div class="hud-row">
+          <div class="hud-group">
+            <button id="coin-balance" class="hud-control" type="button">
+              庙会币 <b id="lobby-coins">30</b>
+            </button>
+            <button id="open-personal-record" class="hud-control" type="button" aria-haspopup="dialog">
+              <span class="stat-icon icon-goose" aria-hidden="true"></span>
+              <span class="sr-only">个人记录，累计套鹅</span>
+              <b>—</b>
+            </button>
+          </div>
+          <div class="hud-group">
+            <button id="open-ring-exchange" class="hud-control" type="button">换套圈 <span>20 币换 20 圈</span></button>
+            <button class="hud-control" type="button" disabled>排行榜</button>
+            <button class="hud-control" type="button" data-open-settings>设置</button>
+          </div>
+        </div>
+        <nav class="mode-nav" aria-label="选择模式">
+          <button class="hud-control" type="button" data-entry-mode="static">静态</button>
+          <button class="hud-control" type="button" data-entry-mode="normal">普通</button>
+          <button class="hud-control" type="button" data-entry-mode="clever">机灵</button>
+        </nav>
+      </header>
+      <header id="throw-hud" class="game-hud hud-row" aria-label="投掷场顶栏" hidden>
+        <div class="hud-group">
+          <span class="hud-label" id="mode-label"></span>
+          <dl class="throw-hud-stats" id="formal-stats">
+            <div>
+              <dt><span class="stat-icon icon-ring" aria-hidden="true"></span><span class="sr-only">剩余圈</span></dt>
+              <dd id="round-rings">—</dd>
+            </div>
+            <div>
+              <dt><span class="stat-icon icon-check" aria-hidden="true">✓</span><span class="sr-only">本盘已套</span></dt>
+              <dd id="round-caught">—</dd>
+            </div>
+            <div>
+              <dt><span class="stat-icon icon-goose" aria-hidden="true"></span><span class="sr-only">个人累计</span></dt>
+              <dd>—</dd>
+            </div>
+          </dl>
+        </div>
+        <div class="hud-group">
+          <button id="hud-assist" class="hud-control" type="button" aria-label="轨迹辅助" aria-pressed="true">辅助</button>
+          <button class="hud-control" type="button" data-open-settings>设置</button>
+          <button id="debug-toggle" class="hud-control" type="button" aria-controls="debug-panel" aria-expanded="false">调试</button>
+          <button id="pause-game" class="hud-control" type="button" hidden>歇口气</button>
+          <a id="practice-lobby" class="hud-control" href="?mode=lobby" data-screen-mode="lobby" hidden>大厅</a>
+        </div>
+      </header>
+      <div id="throw-start-hint" hidden aria-hidden="true">
+        <span id="hint-text" class="hint-text" hidden></span>
+        <div id="throw-meter" class="meter-panel" hidden>
+          <div class="meter-row"><span>蓄力</span><span id="charge-value">0%</span></div>
+          <div class="meter-track"><i id="charge-fill"></i></div>
+          <div class="meter-row"><span>偏转</span><span id="aim-value">0°</span></div>
+          <div class="meter-track aim-track"><i id="aim-fill"></i></div>
+        </div>
       </div>
-    </header>
-    <div id="ui-safe-guide" hidden>
-      <div class="safe-band safe-top"><span>顶部 UI 安全区 12%</span></div>
-      <div class="safe-band safe-bottom"><span>底部 UI 安全区 8%</span></div>
+      <div id="lobby-ad" hidden>广告预留</div>
+      <div id="ui-safe-guide" hidden aria-hidden="true"></div>
+      <div id="debug-panel" hidden></div>
+      <div id="judge-debug" hidden></div>
+      <dialog id="game-settings" class="game-dialog" aria-labelledby="settings-title">
+        <h2 id="settings-title">设置</h2>
+        <details>
+          <summary>玩法说明</summary>
+          <p>从手持圈或屏幕底部起手。按住计时或向下拉动可以蓄力，左右拖动调整方向，松手投出。</p>
+          <p>也可以向上拨圈后松手。等上一圈结束，再拿下一只。</p>
+        </details>
+        <div class="hud-group">
+          <button id="sound-toggle" class="hud-control" type="button" aria-pressed="true">音效</button>
+          <button id="clear-field" class="hud-control" type="button">清场</button>
+        </div>
+        <form method="dialog"><button class="hud-control" type="submit">关闭</button></form>
+      </dialog>
+      <dialog id="coin-wallet" class="game-dialog" aria-labelledby="wallet-title">
+        <h2 id="wallet-title">庙会币</h2>
+        <p role="status">试玩余额 <strong id="wallet-coins">30</strong> 币</p>
+        <form class="dialog-actions" method="dialog">
+          <button id="wallet-claim" class="hud-control primary-control" type="button">免费领取今日 20 币</button>
+          <button class="hud-control" type="submit">返回</button>
+        </form>
+      </dialog>
+      <dialog id="personal-record" class="game-dialog" aria-labelledby="personal-record-title">
+        <h2 id="personal-record-title">个人记录</h2>
+        <p>正式场战绩统计尚未开放。</p>
+        <table class="record-table" aria-labelledby="personal-record-title">
+          <thead>
+            <tr><th scope="col">场次</th><th scope="col">套中</th><th scope="col">投圈</th><th scope="col">命中率</th></tr>
+          </thead>
+          <tbody>
+            <tr><th scope="row">静态场</th><td>—</td><td>—</td><td>—</td></tr>
+            <tr><th scope="row">普通场</th><td>—</td><td>—</td><td>—</td></tr>
+            <tr><th scope="row">机灵场</th><td>—</td><td>—</td><td>—</td></tr>
+          </tbody>
+        </table>
+        <form class="dialog-actions" method="dialog"><button class="hud-control" type="submit">返回</button></form>
+      </dialog>
+      <dialog id="ring-exchange" class="game-dialog" aria-labelledby="exchange-title">
+        <form id="exchange-form">
+          <h2 id="exchange-title">换套圈</h2>
+          <p>试玩余额 <strong id="exchange-coins">30</strong> 币</p>
+          <label for="exchange-mode">本场模式</label>
+          <select id="exchange-mode" class="hud-control">
+            <option value="">选择场次</option>
+            <option value="static">静态场</option>
+            <option value="normal">普通场</option>
+            <option value="clever">机灵场</option>
+          </select>
+          <fieldset class="exchange-packs">
+            <legend>本场套圈</legend>
+            <label><input type="radio" name="pack" value="20" checked>20 币换 20 圈</label>
+            <label><input type="radio" name="pack" value="60">50 币换 60 圈</label>
+          </fieldset>
+          <p id="exchange-status" role="status"></p>
+          <div class="dialog-actions">
+            <button id="confirm-ring-exchange" class="hud-control primary-control" type="submit" disabled>请选择场次</button>
+            <button id="exchange-wallet" class="hud-control" type="button" hidden>去领币</button>
+            <button id="close-ring-exchange" class="hud-control" type="button">取消</button>
+          </div>
+        </form>
+      </dialog>
+      <dialog id="pause-menu" class="game-dialog" aria-labelledby="pause-title">
+        <h2 id="pause-title">歇口气</h2>
+        <form id="pause-actions" class="dialog-actions" method="dialog">
+          <button id="resume-round" class="hud-control primary-control" type="submit" autofocus>继续对局</button>
+          <button id="end-round" class="hud-control" type="button">提前结束</button>
+        </form>
+        <div id="end-round-confirm" hidden>
+          <p id="end-round-remaining"></p>
+          <p>确认后结束本场，返回大厅。</p>
+          <div class="dialog-actions">
+            <button id="cancel-end-round" class="hud-control primary-control" type="button">取消</button>
+            <a class="hud-control" href="?mode=lobby" data-screen-mode="lobby">确认结束</a>
+          </div>
+        </div>
+      </dialog>
+      <dialog id="round-result" class="game-dialog" aria-labelledby="round-result-title">
+        <h2 id="round-result-title">对局详情</h2>
+        <dl class="round-summary">
+          <div><dt>场次</dt><dd id="result-mode"></dd></div>
+          <div><dt>本场已投</dt><dd id="result-throws"></dd></div>
+          <div><dt>结束原因</dt><dd>本场圈已用完</dd></div>
+        </dl>
+        <div class="dialog-actions">
+          <a class="hud-control primary-control" href="?mode=lobby" data-screen-mode="lobby" autofocus>返回大厅</a>
+        </div>
+      </dialog>
     </div>
-    <div id="debug-panel" hidden></div>
     <div id="rotate-overlay">
       <div class="rotate-icon">📱↻</div>
       <p>请将手机旋转到<b>横屏</b>游玩</p>
