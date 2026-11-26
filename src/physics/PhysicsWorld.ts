@@ -4,12 +4,22 @@ import { gameConfig } from '../config/gameConfig';
 import type { GooseLayoutEntry } from '../goose/GoosePlaceholder';
 import { createRingRigidBody, type RingBodyOptions } from '../ring/ringBody';
 
+/** 鹅的碰撞部位：身体 / 颈 / 头。 */
+export type GoosePart = 'body' | 'neck' | 'head';
+
 /**
  * Rapier 物理世界封装：静态地面/围栏/灰盒鹅 Collider、测试球投放、固定步进、碰撞线框调试。
  * 约束（AGENTS.md）：单份物理状态源；围栏每段边界覆盖真实可见尺寸，球/圈不能穿栏。
  */
 export class PhysicsWorld {
   readonly world: RAPIER.World;
+  private groundCollider!: RAPIER.Collider;
+  /** 碰撞体 handle → 可读名称（ground / fence / goose-N），用于调试与证据导出。 */
+  private readonly labels = new Map<number, string>();
+  /** 碰撞体 handle → 鹅序号与部位，供套中判定使用。 */
+  private readonly parts = new Map<number, { index: number; part: GoosePart }>();
+  /** 每只鹅的刚体（套中退场时整体移除）。 */
+  private readonly gooseBodies: Array<RAPIER.RigidBody | undefined> = [];
 
   /** Rapier 碰撞体线框（调试图层，默认关闭）。 */
   private debugLines: THREE.LineSegments;
@@ -54,10 +64,11 @@ export class PhysicsWorld {
     const staticBody = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
 
     // 地面：厚盒，顶面正好在 y=0
-    this.world.createCollider(
+    this.groundCollider = this.world.createCollider(
       RAPIER.ColliderDesc.cuboid(ground.sizeX / 2, 0.5, ground.sizeZ / 2).setTranslation(0, -0.5, 0),
       staticBody,
     );
+    this.labels.set(this.groundCollider.handle, 'ground');
 
     // 围栏四面薄墙：每侧高度 = 视觉栏杆高度，不留下可穿过的缝隙
     const t = 0.08; // 墙厚
@@ -71,50 +82,81 @@ export class PhysicsWorld {
     ];
     const heights = [farHeight, nearHeight, sideHeight, sideHeight];
     walls.forEach(([hx, hy, hz, x, z], i) => {
-      this.world.createCollider(
+      const collider = this.world.createCollider(
         RAPIER.ColliderDesc.cuboid(hx, hy, hz)
           .setTranslation(x, heights[i] / 2, z)
           .setFriction(0.8)
           .setRestitution(0.3),
         staticBody,
       );
+      this.labels.set(collider.handle, 'fence');
     });
   }
 
   /** 灰盒鹅静态碰撞体：身体球 + 颈胶囊 + 头球，与视觉占位体使用同一份配置。 */
   private buildGooseColliders(layout: readonly GooseLayoutEntry[]): void {
     const { body, neck, head, collider } = gameConfig.goose;
-    for (const entry of layout) {
+    layout.forEach((entry, index) => {
       const half = entry.rotY / 2;
       const gooseBody = this.world.createRigidBody(
         RAPIER.RigidBodyDesc.fixed()
           .setTranslation(entry.x, 0, entry.z)
           .setRotation({ x: 0, y: Math.sin(half), z: 0, w: Math.cos(half) }),
       );
+      this.gooseBodies[index] = gooseBody;
+      const label = `goose-${index + 1}`;
+      const register = (handle: number, part: GoosePart) => {
+        this.labels.set(handle, label);
+        this.parts.set(handle, { index, part });
+      };
       // 身体（近似球）
-      this.world.createCollider(
+      register(this.world.createCollider(
         RAPIER.ColliderDesc.ball(collider.bodyRadius).setTranslation(0, body.y, 0),
         gooseBody,
-      );
+      ).handle, 'body');
       // 颈（竖直胶囊）
-      this.world.createCollider(
+      register(this.world.createCollider(
         RAPIER.ColliderDesc.capsule(collider.neckHalfHeight, collider.neckRadius).setTranslation(
           0,
           neck.y,
           neck.forward,
         ),
         gooseBody,
-      );
+      ).handle, 'neck');
       // 头（球）
-      this.world.createCollider(
+      register(this.world.createCollider(
         RAPIER.ColliderDesc.ball(collider.headRadius).setTranslation(
           0,
           head.y,
           head.forward,
         ),
         gooseBody,
-      );
+      ).handle, 'head');
+    });
+  }
+
+  /** 碰撞体 handle 对应的可读名称；未知返回 undefined。 */
+  labelOf(handle: number): string | undefined {
+    return this.labels.get(handle);
+  }
+
+  /** 碰撞体 handle 对应的鹅与部位（身体/颈/头）；非鹅碰撞体返回 null。 */
+  goosePartOf(handle: number): { index: number; part: GoosePart } | null {
+    return this.parts.get(handle) ?? null;
+  }
+
+  /** 移除一只鹅的全部碰撞体（套中退场用）；之后不再参与碰撞与判定。 */
+  removeGoose(index: number): void {
+    const body = this.gooseBodies[index];
+    if (!body) return;
+    const colliders = body.numColliders();
+    for (let i = 0; i < colliders; i++) {
+      const handle = body.collider(i).handle;
+      this.labels.delete(handle);
+      this.parts.delete(handle);
     }
+    this.world.removeRigidBody(body);
+    this.gooseBodies[index] = undefined;
   }
 
   /** 投放一颗测试刚体球，落到地面证明碰撞有效。返回其刚体。 */
@@ -140,6 +182,16 @@ export class PhysicsWorld {
 
   removeBody(body: RAPIER.RigidBody): void {
     this.world.removeRigidBody(body);
+  }
+
+  isTouchingGround(body: RAPIER.RigidBody): boolean {
+    let touching = false;
+    for (let i = 0; i < body.numColliders() && !touching; i++) {
+      this.world.contactPair(body.collider(i), this.groundCollider, (manifold) => {
+        touching ||= manifold.numSolverContacts() > 0;
+      });
+    }
+    return touching;
   }
 
   /** 固定步进（由 GameApp 的累加器驱动，防止帧率影响物理结果）。 */

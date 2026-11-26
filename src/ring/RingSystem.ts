@@ -47,13 +47,11 @@ interface RingEntry {
 export class RingSystem {
   readonly tuning: RingTuning;
   private readonly rings: RingEntry[] = [];
-  private readonly ringMat = new THREE.MeshLambertMaterial({ color: '#e0a83c' });
-  /** 环体旋转对称，单看圆环看不出自转；一个小珠用于观察角速度是否生效。 */
-  private readonly beadMat = new THREE.MeshLambertMaterial({ color: '#b8542a' });
 
   constructor(
     private readonly scene: THREE.Scene,
     private readonly physics: PhysicsWorld,
+    private readonly ringMaterial: THREE.MeshLambertMaterial,
   ) {
     this.tuning = {
       radius: gameConfig.ring.radius,
@@ -91,8 +89,8 @@ export class RingSystem {
   }
 
   /** 按给定初始条件发射一个真实物理套圈。 */
-  launch(spec: RingLaunchSpec): void {
-    const t = this.tuning;
+  launch(spec: RingLaunchSpec, tuning: RingTuning = this.tuning): RAPIER.RigidBody {
+    const t = tuning;
     const body = this.physics.spawnRing({
       radius: t.radius,
       tubeRadius: t.tubeRadius,
@@ -111,10 +109,11 @@ export class RingSystem {
 
     // 环平面与 Collider 一致：TorusGeometry 默认位于局部 XY 平面，法线为局部 Z。
     const torusGeo = new THREE.TorusGeometry(t.radius, t.tubeRadius, 10, 40);
-    const mesh = new THREE.Mesh(torusGeo, this.ringMat);
+    const mesh = new THREE.Mesh(torusGeo, this.ringMaterial);
 
+    // 同色小珠用来观察旋转对称环体的自转。
     const beadGeo = new THREE.SphereGeometry(t.tubeRadius * 1.35, 8, 6);
-    const bead = new THREE.Mesh(beadGeo, this.beadMat);
+    const bead = new THREE.Mesh(beadGeo, this.ringMaterial);
     bead.position.set(t.radius, 0, 0);
     mesh.add(bead);
 
@@ -129,6 +128,7 @@ export class RingSystem {
     if (this.rings.length > gameConfig.ring.maxCount) {
       this.removeAt(0);
     }
+    return body;
   }
 
   /** 每帧同步网格并回收越界/静止过久的套圈（不进入物理步）。 */
@@ -156,6 +156,12 @@ export class RingSystem {
 
   clear(): void {
     for (let i = this.rings.length - 1; i >= 0; i--) this.removeAt(i);
+  }
+
+  /** 移除指定刚体对应的圈（套中退场时把圈一起带走）。 */
+  remove(body: RAPIER.RigidBody): void {
+    const index = this.rings.findIndex((entry) => entry.body === body);
+    if (index >= 0) this.removeAt(index);
   }
 
   private removeAt(index: number): void {
