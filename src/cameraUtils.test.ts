@@ -154,9 +154,11 @@ describe('相机对比模式取景', () => {
     expect(mode).toBeDefined();
     const cam = makeCamera(mode!);
 
-    const farTopLeft = screenOf(cam, -8, gameConfig.fence.farHeight, -5);
-    const farTopRight = screenOf(cam, 8, gameConfig.fence.farHeight, -5);
-    const nearRail = screenOf(cam, 0, gameConfig.fence.nearHeight, 5);
+    const halfW = gameConfig.fence.width / 2;
+    const halfD = gameConfig.fence.depth / 2;
+    const farTopLeft = screenOf(cam, -halfW, gameConfig.fence.farHeight, -halfD);
+    const farTopRight = screenOf(cam, halfW, gameConfig.fence.farHeight, -halfD);
+    const nearRail = screenOf(cam, 0, gameConfig.fence.nearHeight, halfD);
 
     // 围栏顶部：在 12% UI 带下方、且不高于 28%（避免上方大片空地）
     expect(farTopLeft.y).toBeGreaterThan(10);
@@ -174,11 +176,8 @@ describe('相机对比模式取景', () => {
     expect(farTopLeft.x).toBeGreaterThan(0);
     expect(farTopRight.x).toBeLessThan(100);
 
-    // 实验目标鹅的头部不能被顶部 12% / 底部 8% UI 安全带压住
-    const testGoose = gameConfig.goose.layout.reduce((best, cur) =>
-      cur.z > best.z ? cur : best,
-    );
-    const neck = getGooseNeckWorldPosition(testGoose);
+    // 练习鹅的头部不能被顶部 12% / 底部 8% UI 安全带压住
+    const neck = getGooseNeckWorldPosition(gameConfig.goose.practicePosition);
     const head = screenOf(cam, neck.x, gameConfig.goose.head.y, neck.z);
     expect(head.y).toBeGreaterThan(12);
     expect(head.y).toBeLessThan(92);
@@ -260,7 +259,8 @@ describe('相机对比模式取景', () => {
       expect(narrowPitch).toBeCloseTo(widePitch, 6);
 
       // 前栏左右下角（含立柱外沿）与远栏上角都必须在画面内。
-      for (const x of [-8.08, 8.08]) {
+      const railEdge = gameConfig.fence.width / 2 + 0.08;
+      for (const x of [-railEdge, railEdge]) {
         const nearBottom = screenOf(narrowCam, x, 0, gameConfig.fence.depth / 2);
         expect(nearBottom.x).toBeGreaterThan(0);
         expect(nearBottom.x).toBeLessThan(100);
@@ -283,8 +283,8 @@ describe('相机对比模式取景', () => {
       }
 
       // 纵向仍完整可见：远栏顶部在 UI 带下方，前栏不落到画面外。
-      const farTopLeft = screenOf(narrowCam, -8, gameConfig.fence.farHeight, -5);
-      const nearRail = screenOf(narrowCam, 0, gameConfig.fence.nearHeight, 5);
+      const farTopLeft = screenOf(narrowCam, -gameConfig.fence.width / 2, gameConfig.fence.farHeight, -gameConfig.fence.depth / 2);
+      const nearRail = screenOf(narrowCam, 0, gameConfig.fence.nearHeight, gameConfig.fence.depth / 2);
       expect(farTopLeft.y).toBeGreaterThan(10);
       expect(nearRail.y).toBeLessThan(92);
     },

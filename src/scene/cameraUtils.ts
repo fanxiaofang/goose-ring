@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { throwLineClearance, type Rect } from '../layout/computeLayout';
 
 export interface Vec3 {
   x: number;
@@ -64,6 +65,93 @@ export function derivePitchYaw(position: Vec3, target: Vec3): CameraPose {
 /** 转成 three 类型仅供场景使用。 */
 export function toVector3(v: Vec3): THREE.Vector3 {
   return new THREE.Vector3(v.x, v.y, v.z);
+}
+
+export function boxCorners(box: THREE.Box3): THREE.Vector3[] {
+  if (box.isEmpty()) return [];
+  return [box.min.x, box.max.x].flatMap((x) =>
+    [box.min.y, box.max.y].flatMap((y) =>
+      [box.min.z, box.max.z].map((z) => new THREE.Vector3(x, y, z)),
+    ),
+  );
+}
+
+interface PlayRectFraming {
+  baseDistance: number;
+  pitchDeg: number;
+  yawDeg: number;
+  target: Vec3;
+  viewport: Rect;
+  play: Rect;
+  points: readonly THREE.Vector3[];
+  /** Decorative fence ends can extend past the safe horizontal frame. */
+  perimeter?: readonly THREE.Vector3[];
+}
+
+/** Fit the content to a CSS-pixel rect while preserving the full-canvas pixel scale. */
+export function framePerspective(camera: THREE.PerspectiveCamera, options: PlayRectFraming): void {
+  const { baseDistance, pitchDeg, yawDeg, target, viewport, play, points, perimeter } = options;
+  const origin = toVector3(target);
+  const backward = toVector3(computeCameraPosition(pitchDeg, yawDeg, 1));
+  const yaw = THREE.MathUtils.degToRad(yawDeg);
+  const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
+  const up = backward.clone().cross(right);
+  const focalPx = viewport.height / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
+  const halfWidth = Math.max(1, play.width / (2 * 1.1));
+  const gutterY = Math.min(throwLineClearance, play.height / 4);
+  const halfHeight = Math.max(1, play.height / 2 - gutterY);
+
+  let distance = baseDistance;
+  const delta = new THREE.Vector3();
+  function fit(bounds: readonly THREE.Vector3[], width: number): void {
+    for (const point of bounds) {
+      delta.subVectors(point, origin);
+      const depth = Math.max(
+        focalPx * Math.abs(delta.dot(right)) / width,
+        focalPx * Math.abs(delta.dot(up)) / halfHeight,
+        camera.near + 0.01,
+      );
+      distance = Math.max(distance, depth + delta.dot(backward));
+    }
+  }
+  fit(points, halfWidth);
+  if (perimeter) fit(perimeter, Math.max(1, play.width * 0.54));
+
+  camera.position.copy(origin).addScaledVector(backward, distance);
+  camera.lookAt(origin);
+  camera.far = Math.max(80, distance + 40);
+  // Using the full dimensions for both views shifts the principal point without zooming.
+  camera.setViewOffset(
+    viewport.width,
+    viewport.height,
+    (viewport.width - play.width) / 2 - play.x,
+    (viewport.height - play.height) / 2 - play.y,
+    viewport.width,
+    viewport.height,
+  );
+  camera.updateMatrixWorld(true);
+}
+
+export function projectBounds(
+  points: readonly THREE.Vector3[],
+  camera: THREE.Camera,
+  viewport: Rect,
+): Rect {
+  let left = Infinity;
+  let right = -Infinity;
+  let top = Infinity;
+  let bottom = -Infinity;
+  const ndc = new THREE.Vector3();
+  for (const point of points) {
+    ndc.copy(point).project(camera);
+    const x = (ndc.x + 1) * viewport.width / 2;
+    const y = (1 - ndc.y) * viewport.height / 2;
+    left = Math.min(left, x);
+    right = Math.max(right, x);
+    top = Math.min(top, y);
+    bottom = Math.max(bottom, y);
+  }
+  return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
 export interface PerspectiveFitOptions {
