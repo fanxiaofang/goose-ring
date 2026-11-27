@@ -393,12 +393,13 @@
 | `accuracyStatic` / `accuracyNormal` / `accuracyClever` | 各模式有效套中次数 / 对应模式正式投圈次数 × 100% | 分模式技巧指标 |
 | `clearCount` | 历史清摊完成次数 | 成就指标 |
 | `excellentClearCount` | 漂亮清摊次数 | 技巧成就 |
-| `monthlyCaught` | 当月正式有效套中数，在每次成功后更新 | 月榜 |
+| `monthlyCaught` | 当月全部正式模式有效套中数，在每次成功后更新 | 全部模式月榜 |
+| `monthlyCaughtStatic` / `monthlyCaughtNormal` / `monthlyCaughtClever` | 当月静态/普通/机灵场各自有效套中数 | 对应模式独立月榜 |
 | ~~`practiceRingsRemaining`~~ | 已废弃：单鹅调试直达不计圈 | 【2026-11-26】练习已降级为内部调试，不再维护玩家练习圈库存 |
 
 **定义细节**：一个圈最多计中一只鹅；砸中身体、挂圈不稳、被甩脱均不算。单鹅调试直达不改变正式累计、投圈数与命中率。所有正式累计在每次成功确认时即时入账，换盘/退出/清摊不再次加总。
 
-### 10.2 榜单建议
+### 10.2 榜单规则
 
 - 榜单时间维度：**月榜 / 历史总榜**。
 - 榜单模式筛选：**静态场 / 普通场 / 机灵场 / 全部**。静态场拥有独立榜单，与普通场、机灵场分别统计、分别排名；「全部」汇总三个正式模式的有效套中总数。
@@ -632,6 +633,10 @@ type PlayerProgress = {
   totalThrowsStatic: number;
   totalThrowsNormal: number;
   totalThrowsClever: number;
+  monthlyCaught: number; // 当月全部正式模式汇总
+  monthlyCaughtStatic: number;
+  monthlyCaughtNormal: number;
+  monthlyCaughtClever: number;
   clearCount: number;
   excellentClearCount: number;
   // practiceRingsRemaining 已废弃：单鹅调试直达不计正式圈【2026-11-26】
